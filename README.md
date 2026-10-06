@@ -156,4 +156,6 @@ Stratos is a playable browser prototype. Its flight and weapons are tuned for ar
 
 Future improvements include richer scenery, terrain transitions, more mission variety, aircraft animation, and broader browser/device performance testing. Multiplayer is not implemented.
 
+The proposed [Stratos: Broken Horizon multiplayer design](docs/MULTIPLAYER_DESIGN.md) outlines a cooperative campaign with runway launches, escort missions, dogfights, strikes, wingman teamwork and return-to-base recovery. It also scopes the first multiplayer mission and the sequence for implementing it.
+
 For the design background, explore the [original implementation plan](IMPLEMENTATION_PLAN.md), [world/combat/effects research](docs/research/README.md), and [current implementation notes](docs/IMPLEMENTATION_STATUS.md).
