@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.vite/
+*.log
+.test-output/
+meshy_output/
+.env
+.env.*
+!.env.example
