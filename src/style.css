@@ -1030,6 +1030,134 @@ body:not([data-state="menu"]) .menu-footer {
 body[data-state="menu"] #debug {
   display: none;
 }
+.binding-settings {
+  margin-top: 18px;
+}
+.combat-launches {
+  position: fixed;
+  right: 44px;
+  top: 120px;
+  padding: 15px;
+  background: #102e32bd;
+  border: 1px solid var(--line);
+}
+.combat-launches > div {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.combat-launches button {
+  background: #102e3270;
+  border: 1px solid var(--line);
+  padding: 10px 14px;
+  font-size: 12px;
+}
+.combat-launches button span {
+  color: var(--acid);
+  margin-left: 6px;
+}
+.combat-panel {
+  position: fixed;
+  right: 44px;
+  top: 150px;
+  width: 245px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  background: #102e32bd;
+  font-size: calc(12px * var(--hud-scale, 1));
+}
+.combat-panel strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 20px;
+}
+.combat-panel p {
+  line-height: 1.6;
+  margin: 8px 0;
+}
+.combat-lock-track {
+  height: 3px;
+  background: #ffffff22;
+}
+.combat-lock-track span {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--acid);
+}
+.combat-resources {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 9px;
+  margin-top: 15px;
+  font-size: 10px;
+}
+.combat-resources b {
+  color: var(--acid);
+}
+.target-marker {
+  position: fixed;
+  transform: translate(-50%, -50%);
+  color: #ffbb83;
+  text-align: center;
+  pointer-events: none;
+}
+.target-marker span {
+  font-size: 42px;
+  line-height: 1;
+  display: block;
+}
+.target-marker small {
+  font: 11px monospace;
+  text-shadow: 0 1px 5px #000;
+}
+.target-marker[data-locked="true"] {
+  color: var(--acid);
+}
+.target-marker[data-offscreen="true"] span {
+  font-size: 28px;
+}
+.hit-confirm {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: #ffcb85;
+  font-size: 34px;
+}
+@media (max-width: 800px) {
+  .combat-panel {
+    right: 16px;
+    top: 170px;
+    width: 190px;
+    padding: 10px;
+  }
+  .combat-launches {
+    right: 20px;
+    top: 110px;
+    padding: 10px;
+  }
+  .combat-launches button {
+    padding: 8px;
+  }
+}
+.topbar {
+  background: linear-gradient(#102e3245, transparent);
+  text-shadow: 0 1px 4px #102e32;
+}
+.hud .objective strong {
+  font-size: calc(23px * var(--hud-scale, 1));
+}
+.hud .objective p {
+  font-size: calc(12px * var(--hud-scale, 1));
+}
+.hud .data-block strong {
+  font-size: calc(52px * var(--hud-scale, 1));
+}
+dialog {
+  max-height: 88vh;
+  overflow-y: auto;
+}
 .waypoint {
   transform: translate(-50%, -50%);
 }

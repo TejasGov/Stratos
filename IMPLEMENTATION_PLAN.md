@@ -1,6 +1,6 @@
 # AirGame implementation plan
 
-Prepared September 30, 2026. This document plans the implementation; application code has not been created.
+Prepared September 30, 2026 as the original implementation plan. The application and subsequent combat/world upgrades are now implemented; see [current implementation status](docs/IMPLEMENTATION_STATUS.md) for delivered features, validation and remaining work.
 
 ## Game direction and initial scope
 
@@ -98,13 +98,13 @@ Keep the architecture small and explicit. Introduce additional modules only when
 
 ## Implementation order and completion gates
 
-| Milestone | Work | Completion gate |
-| --- | --- | --- |
-| 1. Aircraft on screen | Scaffold Vite/TypeScript; import jet; correct orientation/scale; sky/light/test terrain; loading screen; error handling. | Jet renders in browser with correct textures and orientation; resize and asset failures handled; production build passes. |
-| 2. Playable flight | Fixed-step flight, keyboard controls, chase camera, telemetry, pause, swept terrain collision, crash/restart. | Player can fly freely for 10 minutes; pitch/roll/yaw and throttle are responsive; no NaNs, camera jitter, stuck keys, or terrain tunneling; restarting works. |
-| 3. Open world | Seeded terrain workers, chunk queues, LOD rings, floating origin, ocean, scenery, landmarks, navigation. | Continuous flight crosses at least 50 chunk boundaries and multiple origin shifts without loading screens or world gaps; returning restores the same terrain; resident resources remain bounded. |
-| 4. Complete game loop | Discovery and two flight challenges; anime.js menus/banners/transitions; audio; settings; saved progress. | Starting, completing, failing, retrying, pausing, reloading, and resuming all work; free flight remains available. |
-| 5. Performance and release | Profile; adjust LOD/resolution/scenery; browser compatibility; accessibility; asset caching; release build. | Meets the agreed reference-device budget, passes cross-browser smoke tests, and survives a 30-minute traversal without steadily increasing memory or resource counts. |
+| Milestone                  | Work                                                                                                                     | Completion gate                                                                                                                                                                                  |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1. Aircraft on screen      | Scaffold Vite/TypeScript; import jet; correct orientation/scale; sky/light/test terrain; loading screen; error handling. | Jet renders in browser with correct textures and orientation; resize and asset failures handled; production build passes.                                                                        |
+| 2. Playable flight         | Fixed-step flight, keyboard controls, chase camera, telemetry, pause, swept terrain collision, crash/restart.            | Player can fly freely for 10 minutes; pitch/roll/yaw and throttle are responsive; no NaNs, camera jitter, stuck keys, or terrain tunneling; restarting works.                                    |
+| 3. Open world              | Seeded terrain workers, chunk queues, LOD rings, floating origin, ocean, scenery, landmarks, navigation.                 | Continuous flight crosses at least 50 chunk boundaries and multiple origin shifts without loading screens or world gaps; returning restores the same terrain; resident resources remain bounded. |
+| 4. Complete game loop      | Discovery and two flight challenges; anime.js menus/banners/transitions; audio; settings; saved progress.                | Starting, completing, failing, retrying, pausing, reloading, and resuming all work; free flight remains available.                                                                               |
+| 5. Performance and release | Profile; adjust LOD/resolution/scenery; browser compatibility; accessibility; asset caching; release build.              | Meets the agreed reference-device budget, passes cross-browser smoke tests, and survives a 30-minute traversal without steadily increasing memory or resource counts.                            |
 
 Build milestone 2 before expanding world complexity: flight feel determines the camera, speeds, view distance, and terrain streaming requirements.
 

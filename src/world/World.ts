@@ -1,6 +1,16 @@
 import * as T from "three";
-import { CHUNK, hash, heightAt } from "./terrain";
+import { CHUNK, hash, heightAt, buildTerrain, regionMasks } from "./terrain";
+import {
+  createOutdoorSky,
+  createOutdoorEnvironment,
+  createOcean,
+  SUN_DIRECTION,
+  WorldQuality,
+} from "../render/OutdoorEnvironment";
+import { CloudLayers } from "../render/CloudLayers";
+import { RequestLedger, terrainTargets } from "./StreamingScheduler";
 interface TerrainResult {
+  requestId?: number;
   key: string;
   x: number;
   z: number;
@@ -17,7 +27,13 @@ export class World {
     string,
     { x: number; z: number; segments: number }
   >();
-  private pending = new Set<string>();
+  private pending = new RequestLedger();
+  private restartAt = 0;
+  private restartAttempts = 0;
+  private fallbackAt = 0;
+  private droppedResults = 0;
+  private uploads = 0;
+  private uploadMilliseconds = 0;
   private results: TerrainResult[] = [];
   private worker = new Worker(new URL("./terrain.worker.ts", import.meta.url), {
     type: "module",
@@ -41,14 +57,16 @@ export class World {
   private bridge = new T.Group();
   private water: T.Mesh;
   private sky: T.Mesh;
-  private clouds: T.InstancedMesh;
-  private sun = new T.DirectionalLight("#fff2d1", 2.0);
+  private clouds = new CloudLayers();
+  private environment?: T.WebGLRenderTarget;
+  private hemisphere = new T.HemisphereLight("#c6ddf2", "#545544", 0.75);
+  private sun = new T.DirectionalLight("#fff1d9", 2.5);
   private matrix = new T.Object3D();
   private worldTime = 0;
   workerError = false;
   constructor(private scene: T.Scene) {
-    scene.fog = new T.FogExp2("#b1ced0", 0.000075);
-    scene.add(new T.HemisphereLight("#d3efff", "#556e54", 1.15));
+    scene.fog = new T.FogExp2("#91b2bf", 0.000075);
+    scene.add(this.hemisphere);
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(1024, 1024);
     this.sun.shadow.camera.left = -900;
@@ -74,65 +92,73 @@ export class World {
         shader.fragmentShader;
       shader.fragmentShader = shader.fragmentShader.replace(
         "#include <color_fragment>",
-        "#include <color_fragment>\nfloat detail=terrainNoise(vTerrainPoint.xz*.013)*.7+terrainNoise(vTerrainPoint.xz*.08)*.3;diffuseColor.rgb*=.7+detail*.5;",
+        `#include <color_fragment>\nfloat detail=terrainNoise(vTerrainPoint.xz*.013)*.7+terrainNoise(vTerrainPoint.xz*.08)*.3;
+float slope=1.-abs(normalize(cross(dFdx(vTerrainPoint),dFdy(vTerrainPoint))).y);
+float shore=1.-smoothstep(5.,45.,vTerrainPoint.y);
+vec3 rock=vec3(.16,.15,.13)*(0.8+detail*.3);
+vec3 sand=vec3(.40,.34,.23)*(0.9+detail*.15);
+diffuseColor.rgb*=.82+detail*.32;
+diffuseColor.rgb=mix(diffuseColor.rgb,rock,smoothstep(.23,.62,slope)*.72);
+diffuseColor.rgb=mix(diffuseColor.rgb,sand,shore*.62);`,
       );
     };
-    this.sky = new T.Mesh(
-      new T.SphereGeometry(17000, 32, 20),
-      new T.ShaderMaterial({
-        side: T.BackSide,
-        depthWrite: false,
-        uniforms: {},
-        vertexShader: `varying vec3 vDirection; void main(){ vDirection=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.); }`,
-        fragmentShader: `varying vec3 vDirection; void main(){vec3 d=normalize(vDirection); float h=max(d.y,0.); vec3 c=mix(vec3(.72,.83,.82),vec3(.17,.42,.56),pow(h,.48)); float s=max(dot(d,normalize(vec3(-.65,.28,-.6))),0.); c+=vec3(1.,.7,.34)*pow(s,140.)*.3+vec3(1.,.92,.72)*smoothstep(.9995,.9999,s); gl_FragColor=vec4(c,1.);}`,
-      }),
-    );
+    this.sky = createOutdoorSky();
     scene.add(this.sky);
-    const waterMaterial = new T.ShaderMaterial({
-      uniforms: { time: { value: 0 }, offset: { value: new T.Vector2() } },
-      vertexShader: `varying vec3 vWorld; varying float vDepth; void main(){vec4 w=modelMatrix*vec4(position,1.);vWorld=w.xyz;vec4 p=viewMatrix*w;vDepth=-p.z;gl_Position=projectionMatrix*p;}`,
-      fragmentShader: `uniform float time; uniform vec2 offset; varying vec3 vWorld; varying float vDepth; void main(){vec2 p=vWorld.xz+offset; float a=sin(p.x*.018+p.y*.012+time*.7); float b=sin(p.x*.041-p.y*.025-time*.9); float ripple=a*b; vec3 c=vec3(.055,.30,.36)+ripple*.014; float streak=pow(max(0.,sin(p.x*.025+p.y*.02+time)),24.)*.025;c+=vec3(streak); float fog=1.-exp(-max(vDepth,0.)*.000095);c=mix(c,vec3(.69,.81,.82),fog);gl_FragColor=vec4(c,1.);}`,
-    });
-    this.water = new T.Mesh(new T.PlaneGeometry(150000, 150000), waterMaterial);
+    this.water = createOcean();
     this.water.rotation.x = -Math.PI / 2;
-    scene.add(this.water);
-    this.clouds = new T.InstancedMesh(
-      new T.SphereGeometry(1, 7, 5),
-      new T.MeshStandardMaterial({
-        color: "#e6eee9",
-        roughness: 1,
-        transparent: true,
-        opacity: 0.62,
-        depthWrite: false,
-      }),
-      48,
-    );
-    for (let i = 0; i < 48; i++) {
-      this.matrix.position.set(
-        (hash(i, 3) - 0.5) * 22000,
-        2400 + hash(i, 4) * 1300,
-        (hash(i, 5) - 0.5) * 22000,
-      );
-      this.matrix.scale.set(
-        300 + hash(i, 6) * 500,
-        55 + hash(i, 7) * 100,
-        180 + hash(i, 8) * 400,
-      );
-      this.matrix.updateMatrix();
-      this.clouds.setMatrixAt(i, this.matrix.matrix);
-    }
-    scene.add(this.clouds);
+    scene.add(this.water, this.clouds.mesh);
     this.createAirfield();
     this.createBridge();
-    this.worker.onmessage = (e) => {
-      this.pending.delete(e.data.key);
-      if (this.desired.has(e.data.key)) this.results.push(e.data);
+    this.bindWorker();
+  }
+  private bindWorker() {
+    const worker = this.worker;
+    worker.onmessage = (e: MessageEvent<TerrainResult>) => {
+      const data = e.data;
+      if (
+        worker !== this.worker ||
+        !this.pending.finish(data.key, data.requestId ?? -1)
+      )
+        return;
+      if (this.desired.has(data.key) && this.queuedBytes < 4 * 1024 * 1024)
+        this.results.push(data);
+      else this.droppedResults++;
       this.dispatch();
     };
-    this.worker.onerror = () => {
-      this.workerError = true;
+    worker.onerror = () => this.failWorker();
+    worker.onmessageerror = () => this.failWorker();
+  }
+  private failWorker() {
+    this.worker.terminate();
+    this.workerError = true;
+    this.pending.clear();
+    this.restartAt = this.worldTime + 3;
+  }
+  private get queuedBytes() {
+    return this.results.reduce(
+      (bytes, data) =>
+        bytes +
+        data.positions.byteLength +
+        data.normals.byteLength +
+        data.colors.byteLength +
+        data.indices.byteLength,
+      0,
+    );
+  }
+  get stats() {
+    return {
+      chunks: this.chunks.size,
+      pending: this.pending.size,
+      queued: this.results.length,
+      queuedBytes: this.queuedBytes,
+      uploaded: this.uploads,
+      staleDropped: this.droppedResults,
+      workerFallback: this.workerError,
+      restartAttempts: this.restartAttempts,
+      uploadMilliseconds: this.uploadMilliseconds,
     };
   }
+
   private createAirfield() {
     const runway = new T.Mesh(
       new T.BoxGeometry(65, 1, 1050),
@@ -187,7 +213,8 @@ export class World {
     this.scene.add(this.bridge);
   }
   private dispatch() {
-    if (this.workerError) return;
+    // Reserve headroom for the four already-running worker replies.
+    if (this.workerError || this.queuedBytes >= 3 * 1024 * 1024) return;
     for (const [key, data] of this.desired) {
       if (this.pending.size >= 4) break;
       if (
@@ -195,36 +222,36 @@ export class World {
         !this.pending.has(key) &&
         !this.results.some((r) => r.key === key)
       ) {
-        this.pending.add(key);
-        this.worker.postMessage({ key, ...data });
+        const requestId = this.pending.begin(key, this.worldTime);
+        this.worker.postMessage({ key, ...data, requestId });
       }
     }
   }
-  update(position: T.Vector3, dt: number) {
+  update(position: T.Vector3, dt: number, velocity?: T.Vector3) {
     this.worldTime += dt;
     const cx = Math.floor(position.x / CHUNK),
       cz = Math.floor(position.z / CHUNK),
       cell = `${cx},${cz}`;
+    this.desired.clear();
+    for (const t of terrainTargets(position, velocity))
+      this.desired.set(`${t.x},${t.z},${t.segments}`, t);
+    if (!this.workerError && this.pending.oldestAge(this.worldTime) > 8)
+      this.failWorker();
+    if (
+      this.workerError &&
+      this.restartAttempts < 2 &&
+      this.worldTime >= this.restartAt
+    ) {
+      this.restartAttempts++;
+      this.worker = new Worker(
+        new URL("./terrain.worker.ts", import.meta.url),
+        { type: "module" },
+      );
+      this.workerError = false;
+      this.bindWorker();
+    }
     if (cell !== this.lastCell) {
       this.lastCell = cell;
-      this.desired.clear();
-      const targets = [];
-      for (let z = -4; z <= 4; z++)
-        for (let x = -4; x <= 4; x++)
-          targets.push({
-            x: cx + x,
-            z: cz + z,
-            segments:
-              Math.max(Math.abs(x), Math.abs(z)) <= 1
-                ? 48
-                : Math.max(Math.abs(x), Math.abs(z)) <= 2
-                  ? 24
-                  : 12,
-            d: x * x + z * z,
-          });
-      targets.sort((a, b) => a.d - b.d);
-      for (const t of targets)
-        this.desired.set(`${t.x},${t.z},${t.segments}`, t);
       for (const [key, group] of this.chunks) {
         const parts = key.split(",").map(Number),
           replacement = [...this.desired.keys()].find((k) =>
@@ -238,6 +265,29 @@ export class World {
       }
       this.results = this.results.filter((r) => this.desired.has(r.key));
       this.dispatch();
+    }
+    this.dispatch();
+    if (this.workerError && this.worldTime >= this.fallbackAt) {
+      const target = [...this.desired.values()].find(
+        (t) =>
+          ![...this.chunks.keys()].some((key) =>
+            key.startsWith(`${t.x},${t.z},`),
+          ),
+      );
+      if (target) {
+        const key = `${target.x},${target.z},12`;
+        this.addChunk(
+          {
+            key,
+            x: target.x,
+            z: target.z,
+            segments: 12,
+            ...buildTerrain(target.x, target.z, 12),
+          },
+          true,
+        );
+      }
+      this.fallbackAt = this.worldTime + 0.25;
     }
     const old = this.origin.clone();
     if (
@@ -254,8 +304,29 @@ export class World {
           z * CHUNK - this.origin.z,
         );
       }
-    for (let i = 0; i < 2 && this.results.length; i++)
-      this.addChunk(this.results.shift()!);
+    // Keep one upload possible, then stop at 2 meshes, 2 MiB or 3 ms CPU installation.
+    this.results.sort(
+      (a, b) =>
+        [...this.desired.keys()].indexOf(a.key) -
+        [...this.desired.keys()].indexOf(b.key),
+    );
+    const uploadStart = performance.now();
+    let uploadBytes = 0;
+    for (let i = 0; i < 2 && this.results.length; i++) {
+      if (
+        i > 0 &&
+        (performance.now() - uploadStart > 3 || uploadBytes >= 2 * 1024 * 1024)
+      )
+        break;
+      const data = this.results.shift()!;
+      uploadBytes +=
+        data.positions.byteLength +
+        data.normals.byteLength +
+        data.colors.byteLength +
+        data.indices.byteLength;
+      this.addChunk(data);
+    }
+    this.uploadMilliseconds = performance.now() - uploadStart;
     this.water.position.set(
       position.x - this.origin.x,
       0,
@@ -272,24 +343,27 @@ export class World {
       position.y,
       position.z - this.origin.z,
     );
-    this.clouds.position.set(
-      Math.floor(position.x / 12000) * 12000 - this.origin.x,
-      0,
-      Math.floor(position.z / 12000) * 12000 - this.origin.z,
-    );
+    this.clouds.update(position, this.origin, this.worldTime);
     this.airfield.position.set(-900 - this.origin.x, 0, -this.origin.z);
     this.bridge.position.set(2500 - this.origin.x, 0, -500 - this.origin.z);
     this.sun.target.position.set(
-      position.x - this.origin.x,
+      Math.round(
+        (position.x - this.origin.x) / (1800 / this.sun.shadow.mapSize.x),
+      ) *
+        (1800 / this.sun.shadow.mapSize.x),
       0,
-      position.z - this.origin.z,
+      Math.round(
+        (position.z - this.origin.z) / (1800 / this.sun.shadow.mapSize.x),
+      ) *
+        (1800 / this.sun.shadow.mapSize.x),
     );
     this.sun.position
       .copy(this.sun.target.position)
-      .add(new T.Vector3(-2500, 4500, 1800));
+      .addScaledVector(SUN_DIRECTION, 6500);
   }
-  private addChunk(data: TerrainResult) {
-    if (!this.desired.has(data.key)) return;
+  private addChunk(data: TerrainResult, fallback = false) {
+    if (!this.desired.has(data.key) && !fallback) return;
+    this.uploads++;
     const group = new T.Group(),
       geometry = new T.BufferGeometry();
     geometry.setAttribute("position", new T.BufferAttribute(data.positions, 3));
@@ -315,13 +389,36 @@ export class World {
   private addScenery(group: T.Group, cx: number, cz: number) {
     const trees: T.Matrix4[] = [],
       buildings: T.Matrix4[] = [];
+    // Authored port storage yard: aligned rows make regional infrastructure readable from flight.
+    for (let row = 0; row < 4; row++)
+      for (let col = 0; col < 6; col++) {
+        const wx = 1780 + col * 24,
+          wz = -1110 + row * 30;
+        if (Math.floor(wx / CHUNK) !== cx || Math.floor(wz / CHUNK) !== cz)
+          continue;
+        this.matrix.position.set(
+          wx - cx * CHUNK,
+          heightAt(wx, wz) + 2.5,
+          wz - cz * CHUNK,
+        );
+        this.matrix.rotation.set(0, 0, 0);
+        this.matrix.scale.set(8, 5, 16);
+        this.matrix.updateMatrix();
+        buildings.push(this.matrix.matrix.clone());
+      }
     for (let i = 0; i < 90; i++) {
       const x = hash(cx * 97 + i, cz * 31) * CHUNK,
         z = hash(cx * 17, cz * 53 + i) * CHUNK,
         wx = cx * CHUNK + x,
         wz = cz * CHUNK + z,
         h = heightAt(wx, wz);
-      if (h < 48 || h > 650 || Math.abs(heightAt(wx + 15, wz) - h) > 10)
+      if (
+        h < 48 ||
+        h > 650 ||
+        regionMasks(wx, wz).infrastructure > 0.2 ||
+        regionMasks(wx, wz).drainage > 0.65 ||
+        Math.abs(heightAt(wx + 15, wz) - h) > 10
+      )
         continue;
       const town = Math.hypot(wx + 900, wz) < 1800 && h < 330;
       const s = 0.7 + hash(i + 3, cx + cz) * 1.5;
@@ -355,8 +452,57 @@ export class World {
     });
     this.chunks.delete(key);
   }
+  createEnvironment(renderer: T.WebGLRenderer) {
+    const previous = this.environment;
+    this.environment = createOutdoorEnvironment(renderer);
+    this.scene.environment = this.environment.texture;
+    previous?.dispose();
+    return this.environment.texture;
+  }
+  setQuality(quality: WorldQuality) {
+    this.clouds.setQuality(quality);
+    this.sun.castShadow = quality !== "low";
+    const size = quality === "high" ? 2048 : 1024;
+    if (this.sun.shadow.mapSize.x !== size) {
+      this.sun.shadow.map?.dispose();
+      this.sun.shadow.map = null;
+      this.sun.shadow.mapSize.set(size, size);
+    }
+    (this.water.material as T.ShaderMaterial).uniforms.detail.value =
+      quality === "low" ? 0 : 1;
+  }
   dispose() {
     this.worker.terminate();
+    this.clouds.dispose();
+    if (this.scene.environment === this.environment?.texture)
+      this.scene.environment = null;
+    this.environment?.dispose();
+    const sharedMaterials = new Set<T.Material>([
+      this.mat,
+      this.treeMaterial,
+      this.buildingMaterial,
+    ]);
+    const geometries = new Set<T.BufferGeometry>();
+    const materials = new Set<T.Material>();
+    for (const root of [this.airfield, this.bridge, this.water, this.sky]) {
+      root.traverse((object) => {
+        if (object instanceof T.Mesh) {
+          geometries.add(object.geometry);
+          for (const material of Array.isArray(object.material)
+            ? object.material
+            : [object.material])
+            if (!sharedMaterials.has(material)) materials.add(material);
+          if (object instanceof T.InstancedMesh) object.dispose();
+        }
+      });
+      root.removeFromParent();
+    }
+    geometries.forEach((g) => g.dispose());
+    materials.forEach((m) => m.dispose());
+    this.sun.removeFromParent();
+    this.sun.target.removeFromParent();
+    this.sun.shadow.dispose();
+    this.hemisphere.removeFromParent();
     for (const [key, g] of this.chunks) this.removeChunk(key, g);
     this.mat.dispose();
     this.treeGeometry.dispose();

@@ -1,5 +1,5 @@
 import { Euler, Quaternion, Vector3, MathUtils } from "three";
-import { heightAt } from "./world/terrain";
+import { heightAt, renderedHeightAt } from "./world/terrain";
 export interface Controls {
   pitch: number;
   roll: number;
@@ -32,6 +32,11 @@ export class Flight {
   private forward = new Vector3();
   private target = new Vector3();
   private angles = new Euler(0, 0, 0, "YXZ");
+  private angularVelocity = new Vector3();
+  private rotationStep = new Quaternion();
+  private axis = new Vector3();
+  private right = new Vector3();
+  private up = new Vector3();
   reset(position?: { x: number; z: number }) {
     this.position.set(position?.x ?? 0, 1250, position?.z ?? 2800);
     this.position.y = Math.max(
@@ -41,6 +46,7 @@ export class Flight {
     this.previous.copy(this.position);
     this.yaw = this.pitch = this.roll = 0;
     this.quaternion.identity();
+    this.angularVelocity.set(0, 0, 0);
     this.previousQuaternion.identity();
     this.speed = 155;
     this.throttle = 0.63;
@@ -49,7 +55,7 @@ export class Flight {
     this.boost = false;
   }
   step(dt: number, control: Controls) {
-    if (this.crashed) return;
+    if (this.crashed || !(dt > 0) || !Number.isFinite(dt)) return;
     this.previous.copy(this.position);
     this.previousQuaternion.copy(this.quaternion);
     this.throttle = MathUtils.clamp(
@@ -58,24 +64,64 @@ export class Flight {
       1,
     );
     this.boost = control.boost && this.throttle > 0.15;
-    this.roll = MathUtils.damp(this.roll, control.roll * 1.16, 2.4, dt);
-    this.pitch = MathUtils.clamp(
-      this.pitch + control.pitch * dt * 0.5,
-      -1.12,
-      1.12,
+    this.forward.set(0, 0, -1).applyQuaternion(this.quaternion);
+    this.right.set(1, 0, 0).applyQuaternion(this.quaternion);
+    this.up.set(0, 1, 0).applyQuaternion(this.quaternion);
+    const bank = Math.atan2(this.right.y, this.up.y);
+    const authority = MathUtils.clamp(this.speed / 160, 0.45, 1.2);
+    // Local angular rates allow complete loops/rolls without Euler-angle limits.
+    const pitchRate =
+      control.pitch * 0.85 * authority +
+      (!control.pitch && this.up.y > 0 ? -Math.asin(this.forward.y) * 0.12 : 0);
+    const rollRate =
+      control.roll * 1.55 * authority +
+      (!control.roll && !control.pitch && Math.abs(this.forward.y) < 0.9
+        ? -bank * 1.7
+        : 0);
+    this.angularVelocity.x = MathUtils.damp(
+      this.angularVelocity.x,
+      pitchRate,
+      5,
+      dt,
     );
-    if (!control.pitch) this.pitch = MathUtils.damp(this.pitch, 0, 0.12, dt);
-    this.yaw += (this.roll * 0.32 + control.yaw * 0.25) * dt;
+    this.angularVelocity.y = MathUtils.damp(
+      this.angularVelocity.y,
+      control.yaw * 0.35,
+      5,
+      dt,
+    );
+    this.angularVelocity.z = MathUtils.damp(
+      this.angularVelocity.z,
+      rollRate,
+      5,
+      dt,
+    );
+    const angularSpeed = this.angularVelocity.length();
+    if (angularSpeed > 1e-8) {
+      this.axis.copy(this.angularVelocity).multiplyScalar(1 / angularSpeed);
+      this.rotationStep.setFromAxisAngle(this.axis, angularSpeed * dt);
+      this.quaternion.multiply(this.rotationStep);
+    }
+    // Assisted coordinated turns apply about world up, reducing unintentional sideslip.
+    this.rotationStep.setFromAxisAngle(
+      this.axis.set(0, 1, 0),
+      Math.sin(bank) * 0.32 * dt,
+    );
+    this.quaternion.premultiply(this.rotationStep).normalize();
+    this.forward.set(0, 0, -1).applyQuaternion(this.quaternion);
+    this.angles.setFromQuaternion(this.quaternion, "YXZ");
+    this.pitch = this.angles.x;
+    this.yaw = this.angles.y;
+    this.roll = this.angles.z;
     const thrust = 9 + this.throttle * 33 + (this.boost ? 27 : 0);
     const drag = 0.00125 * this.speed ** 2;
     this.speed = MathUtils.clamp(
-      this.speed + (thrust - drag - Math.sin(this.pitch) * 12) * dt,
+      this.speed +
+        (thrust - drag - this.forward.y * 12 - Math.abs(control.pitch) * 2) *
+          dt,
       45,
       340,
     );
-    this.angles.set(this.pitch, this.yaw, this.roll);
-    this.quaternion.setFromEuler(this.angles);
-    this.forward.set(0, 0, -1).applyQuaternion(this.quaternion);
     this.target.copy(this.forward).multiplyScalar(this.speed);
     this.target.y -= Math.max(0, 95 - this.speed) * 0.7;
     this.velocity.lerp(this.target, 1 - Math.exp(-3 * dt));
@@ -108,7 +154,7 @@ export function sweptCollision(from: Vector3, to: Vector3) {
       [0, -7],
       [0, 7],
     ]) {
-      if (y < Math.max(0, heightAt(x + dx, z + dz)) + 7) return true;
+      if (y < Math.max(0, renderedHeightAt(x + dx, z + dz)) + 7) return true;
     }
   }
   return false;

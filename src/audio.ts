@@ -4,6 +4,44 @@ export class FlightAudio {
   private gain?: GainNode;
   private wind?: GainNode;
   enabled = true;
+  cue(kind: "gun" | "missile" | "lock" | "warning" | "explosion") {
+    if (!this.context || !this.enabled || this.context.state !== "running")
+      return;
+    const oscillator = this.context.createOscillator();
+    const gain = this.context.createGain();
+    const now = this.context.currentTime;
+    const duration =
+      kind === "explosion" ? 0.55 : kind === "missile" ? 0.22 : 0.09;
+    oscillator.type =
+      kind === "gun" || kind === "explosion" ? "sawtooth" : "sine";
+    const frequency =
+      kind === "lock"
+        ? 900
+        : kind === "warning"
+          ? 550
+          : kind === "missile"
+            ? 350
+            : 100;
+    oscillator.frequency.setValueAtTime(frequency, now);
+    oscillator.frequency.exponentialRampToValueAtTime(
+      kind === "explosion" ? 25 : frequency * 0.7,
+      now + duration,
+    );
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(
+      kind === "explosion" ? 0.07 : 0.035,
+      now + 0.01,
+    );
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+    oscillator.connect(gain);
+    gain.connect(this.context.destination);
+    oscillator.start(now);
+    oscillator.stop(now + duration);
+    oscillator.onended = () => {
+      oscillator.disconnect();
+      gain.disconnect();
+    };
+  }
   async start() {
     if (!this.context) {
       this.context = new AudioContext();

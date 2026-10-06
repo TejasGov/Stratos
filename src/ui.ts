@@ -10,6 +10,44 @@ export function createUI() {
   <dialog id="settings"><form method="dialog"><div class="dialog-head"><span class="eyebrow">FLIGHT PREFERENCES</span><button aria-label="Close settings" class="icon-button">×</button></div><h2>Make it yours.</h2><label>Graphics quality<select id="quality"><option value="medium">Balanced</option><option value="low">Performance</option><option value="high">High fidelity</option></select></label><label>Pitch controls<select id="invert"><option value="normal">W climbs / S descends</option><option value="invert">W descends / S climbs</option></select></label><label>Control sensitivity<input id="sensitivity" type="range" min="0.5" max="1.6" step="0.1" value="1"/></label><label>Engine & wind<input id="audio-setting" type="checkbox" checked/></label><label>Performance readout<input id="debug-setting" type="checkbox"/></label><p class="dialog-note">Your preferences are saved on this device.</p><button class="primary">DONE <span>↗</span></button></form></dialog>
   <dialog id="controls"><form method="dialog"><div class="dialog-head"><span class="eyebrow">FLIGHT SCHOOL / 01</span><button aria-label="Close controls" class="icon-button">×</button></div><h2>Find your wings.</h2><p>Start with gentle turns. Bank into the horizon, then climb above it.</p><div class="control-list"><span><kbd>W</kbd><kbd>S</kbd> Pitch up / down</span><span><kbd>A</kbd><kbd>D</kbd> Bank left / right</span><span><kbd>Q</kbd><kbd>E</kbd> Rudder left / right</span><span><kbd>SHIFT</kbd><kbd>CTRL</kbd> Increase / decrease thrust</span><span><kbd>SPACE</kbd> Afterburner</span><span><kbd>C</kbd> Chase / forward camera</span><span><kbd>R</kbd> Restart flight</span><span><kbd>ESC</kbd> Pause</span></div><button class="primary">READY TO EXPLORE <span>↗</span></button></form></dialog>
   <div id="debug" hidden></div><div id="fatal" class="overlay" hidden><div class="pause-card"><span class="eyebrow">FLIGHT DECK NOTICE</span><h2>Unable to launch.</h2><p id="fatal-message"></p><button class="primary" onclick="location.reload()">TRY AGAIN <span>↗</span></button></div></div><footer class="menu-footer"><span>EXPLORE WITHOUT LIMITS</span><span>UNLIMITED HORIZONS <b>◆</b> LOCAL FLIGHT</span></footer>`;
+  document.querySelector("#settings .dialog-note")!.insertAdjacentHTML(
+    "beforebegin",
+    `
+    <label>Camera shake<input id="shake-setting" type="checkbox" checked/></label>
+    <label>HUD scale<input id="hud-scale" type="range" min="0.8" max="1.3" step="0.1" value="1"/></label>
+    <div class="binding-settings"><span class="eyebrow">COMBAT KEYS</span>${["gun", "missile", "target", "flare"].map((action) => `<label>${action === "gun" ? "Cannon" : action === "missile" ? "Missile" : action === "target" ? "Cycle target" : "Countermeasure"}<select id="bind-${action}">${["F", "X", "T", "V", "G", "H", "J", "K", "Z"].map((key) => `<option value="Key${key}">${key}</option>`).join("")}</select></label>`).join("")}</div>`,
+  );
+  document
+    .querySelector("#controls .control-list")!
+    .insertAdjacentHTML(
+      "beforeend",
+      `<span><kbd>B</kbd> Start / leave combat patrol</span><span><kbd>F</kbd> Cannon (hold)</span><span><kbd>X</kbd> Guided missile</span><span><kbd>T</kbd> Cycle target</span><span><kbd>V</kbd> Countermeasure</span>`,
+    );
+  document
+    .querySelector("#controls form > p")!
+    .insertAdjacentHTML(
+      "afterend",
+      `<p class="dialog-note">Standard gamepad: left stick flies, right stick rudder, triggers thrust; A cannon, B missile, X countermeasure, Y target, LB boost. Press B on the keyboard to start a patrol. Combat keys can be changed in Settings.</p>`,
+    );
+  document
+    .querySelector(".hero")!
+    .insertAdjacentHTML(
+      "beforeend",
+      `<div class="combat-launches"><span class="eyebrow">COMBAT SORTIES</span><div><button data-combat="intercept" disabled>Intercept <span>↗</span></button><button data-combat="escort" disabled>Escort <span>↗</span></button><button data-combat="strike" disabled>Ground strike <span>↗</span></button></div></div>`,
+    );
+  document
+    .querySelector("#hud")!
+    .insertAdjacentHTML(
+      "beforeend",
+      `<section id="combat-panel" class="combat-panel" hidden aria-label="Combat status"><span class="eyebrow" id="combat-state">COMBAT PATROL</span><strong id="combat-target">NO TARGET</strong><p id="combat-lock">Cycle target to acquire</p><div class="combat-lock-track"><span id="combat-lock-fill"></span></div><div class="combat-resources"><span>HULL <b id="combat-health">100%</b></span><span>GUN <b id="combat-gun">—</b></span><span>MSL <b id="combat-missiles">—</b></span><span>FLARES <b id="combat-flares">—</b></span></div><p id="combat-hints"></p></section><div id="target-marker" class="target-marker" hidden aria-label="Selected target"><span>◇</span><small id="target-range"></small></div><div id="hit-confirm" class="hit-confirm" hidden>✕</div>`,
+    );
+  document.querySelector("#crash .pause-card p")!.id = "crash-message";
+  document
+    .querySelector(".combat-resources")!
+    .insertAdjacentHTML(
+      "beforeend",
+      `<span id="combat-ally" hidden>TRANSPORT <b id="combat-ally-health">100%</b></span>`,
+    );
 }
 export const el = <T extends HTMLElement = HTMLElement>(id: string) =>
   document.getElementById(id) as T;
