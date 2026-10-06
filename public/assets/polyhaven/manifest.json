@@ -1,0 +1,99 @@
+{
+  "schema": "stratos.polyhaven.materials.v1",
+  "accessed": "2026-10-06",
+  "license": "CC0-1.0",
+  "licenseUrl": "https://polyhaven.com/license",
+  "resolution": 1024,
+  "files": [
+    {
+      "asset": "aerial_grass_rock",
+      "map": "Diffuse",
+      "path": "aerial_grass_rock_diff_1k.jpg",
+      "source": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/aerial_grass_rock/aerial_grass_rock_diff_1k.jpg",
+      "assetPage": "https://polyhaven.com/a/aerial_grass_rock",
+      "bytes": 666655,
+      "providerMd5": "e920ce36afd0abff000b8366d3d768d3",
+      "sha256": "57b8041bfe0d0f01430e4dbaad45e7ddddf0a9fc97317f90dbc51f7b0d9e1b5d"
+    },
+    {
+      "asset": "aerial_grass_rock",
+      "map": "nor_gl",
+      "path": "aerial_grass_rock_nor_gl_1k.jpg",
+      "source": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/aerial_grass_rock/aerial_grass_rock_nor_gl_1k.jpg",
+      "assetPage": "https://polyhaven.com/a/aerial_grass_rock",
+      "bytes": 904956,
+      "providerMd5": "c8aa4c4f09b113cc7edef89ddeaccad9",
+      "sha256": "1aa3e23bff453f152e089b9f83aa36b4901651e019f7e2ca01d5331a9bbbda78"
+    },
+    {
+      "asset": "aerial_grass_rock",
+      "map": "arm",
+      "path": "aerial_grass_rock_arm_1k.jpg",
+      "source": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/aerial_grass_rock/aerial_grass_rock_arm_1k.jpg",
+      "assetPage": "https://polyhaven.com/a/aerial_grass_rock",
+      "bytes": 216829,
+      "providerMd5": "1f37fdb9b46b7fe34932ed9aa77df0bf",
+      "sha256": "95d8f5180bafaab3f76c394cee3dca9b4f8ca6531281c00c4a06e4485d0ab956"
+    },
+    {
+      "asset": "aerial_rocks_02",
+      "map": "Diffuse",
+      "path": "aerial_rocks_02_diff_1k.jpg",
+      "source": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/aerial_rocks_02/aerial_rocks_02_diff_1k.jpg",
+      "assetPage": "https://polyhaven.com/a/aerial_rocks_02",
+      "bytes": 785923,
+      "providerMd5": "b5795e9b9e43d718ace73448c97d57ab",
+      "sha256": "708373b2af7fd07ac8de1500556006aaf904c41a99985a849cacc78874f38eac"
+    },
+    {
+      "asset": "aerial_rocks_02",
+      "map": "nor_gl",
+      "path": "aerial_rocks_02_nor_gl_1k.jpg",
+      "source": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/aerial_rocks_02/aerial_rocks_02_nor_gl_1k.jpg",
+      "assetPage": "https://polyhaven.com/a/aerial_rocks_02",
+      "bytes": 1177932,
+      "providerMd5": "66fcad0f6a7c2ac99bc978685195420b",
+      "sha256": "6df5263ba6c30e9343ee324d87078b926024d710b0b349025083600369df8d25"
+    },
+    {
+      "asset": "aerial_rocks_02",
+      "map": "arm",
+      "path": "aerial_rocks_02_arm_1k.jpg",
+      "source": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/aerial_rocks_02/aerial_rocks_02_arm_1k.jpg",
+      "assetPage": "https://polyhaven.com/a/aerial_rocks_02",
+      "bytes": 211113,
+      "providerMd5": "22ed967ce76d332166ae3abb1cabb465",
+      "sha256": "de3ffa2b107d3b9144979a1f683028c74ec86823b2b8eefe16bf5bb9a655ad0c"
+    },
+    {
+      "asset": "aerial_sand",
+      "map": "Diffuse",
+      "path": "aerial_sand_diff_1k.jpg",
+      "source": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/aerial_sand/aerial_sand_diff_1k.jpg",
+      "assetPage": "https://polyhaven.com/a/aerial_sand",
+      "bytes": 490916,
+      "providerMd5": "717c892f44895790e6a39ced994e1598",
+      "sha256": "d5195c44aec087d2a30d3ca3a3fa3458a1898986e0572e9a8043f8245598557a"
+    },
+    {
+      "asset": "aerial_sand",
+      "map": "nor_gl",
+      "path": "aerial_sand_nor_gl_1k.jpg",
+      "source": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/aerial_sand/aerial_sand_nor_gl_1k.jpg",
+      "assetPage": "https://polyhaven.com/a/aerial_sand",
+      "bytes": 665488,
+      "providerMd5": "094ef18a596f9b1de34264cd21f8c9d2",
+      "sha256": "cba74d670a681dfcdd72db72afbcb9879c7ec9f5854adae24cac8da2c432ad99"
+    },
+    {
+      "asset": "aerial_sand",
+      "map": "arm",
+      "path": "aerial_sand_arm_1k.jpg",
+      "source": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/aerial_sand/aerial_sand_arm_1k.jpg",
+      "assetPage": "https://polyhaven.com/a/aerial_sand",
+      "bytes": 184628,
+      "providerMd5": "20fc1e4fec253dbefb013cfb08cf330d",
+      "sha256": "9eab2c1f44b796c1a2681dc555c240b6c5666b331e4b9fd3d16d005f5d052972"
+    }
+  ]
+}

@@ -24,7 +24,7 @@ npm run preview  # Serve the production build locally
 | Key                   | Action                                               |
 | --------------------- | ---------------------------------------------------- |
 | W / S or Up / Down    | Pitch up / down                                      |
-| A / D or Left / Right | Bank left / right                                    |
+| A / D or Left / Right | Turn left / right (Easy); bank in Advanced mode      |
 | Q / E                 | Rudder left / right                                  |
 | Shift / Ctrl          | Increase / decrease thrust                           |
 | Space                 | Afterburner                                          |
@@ -36,6 +36,10 @@ npm run preview  # Serve the production build locally
 | X                     | Guided missile, when locked                          |
 | T                     | Cycle targets                                        |
 | V                     | Countermeasure                                       |
+| G                     | Toggle target follow in Easy mode                    |
+| Left / right click    | Cannon / guided missile                              |
+
+Easy controls are the default: turns respond directly, pitch is bounded, and releasing the controls levels the aircraft. Combat sorties start with target follow enabled so you can concentrate on firing. WASD takes manual control; G or the HUD button restores target follow. Move the mouse over the sky to steer when target follow is off. Advanced mode in Settings restores full loops and rolls. Cannon shots have bounded predictive assistance and an AIM lead marker; missile taps queue briefly during acquisition instead of requiring exact timing.
 
 Choose free flight, a race, or one of three combat sorties from the flight deck. Combat keys are remappable in Settings. Standard gamepad: left stick flies, right-stick X controls rudder, triggers change thrust, A fires the cannon, B launches a missile, X deploys countermeasures, Y cycles targets, and LB boosts. Keyboard B starts a patrol; gamepad B is a weapon action. Gamepad support is tested with synthetic standard mappings; individual devices/HOTAS require hardware verification.
 
@@ -43,11 +47,12 @@ Settings include graphics/effects quality, pitch inversion, sensitivity, audio, 
 
 ## Implementation
 
-- Fixed-step quaternion arcade flight with full loops/rolls, assisted neutral handling, interpolated rendering and swept collision.
+- Fixed-step Easy flight with direct turns, automatic leveling, mouse steering and target follow; optional Advanced quaternion aerobatics, interpolated rendering and swept collision.
 - A local Rapier heightfield/obstacle bubble with aircraft-volume queries and synchronized rebasing; analytical near-surface/sea collision remains a safety fallback.
 - Seeded worker terrain with an authored Haven mountain/drainage corridor, coastal shelf, infrastructure/biome masks, multiple detail levels and a floating origin.
 - Velocity-aware request priorities, stale response tokens, bounded installation queues, retained previous LOD coverage, and coarse fallback with worker recovery.
 - Outdoor sky/PMREM, matching sun, Fresnel ocean, quality-scaled cloud impostors, terrain material detail, instanced scenery, an airfield, a bridge, and five landmarks.
+- Local Poly Haven CC0 grass, rock and sand materials: nine 1K color/normal/ARM maps, physical terrain blending and triplanar cliff projection. Source URLs and checksums are recorded in [the asset manifest](public/assets/polyhaven/manifest.json); textures add approximately 5.06 MiB.
 - Two ordered checkpoint challenges, including a low-altitude route with altitude penalties.
 - Intercept, escort and radar-strike missions; bounded enemy AI, cannon/missile pools, moving-target sweeps, lock/range/occlusion feedback, health, flares and threat warnings.
 - Two pooled instanced smoke/fire batches, procedural interpolated flipbooks, damage smoke, explosions, and distance-sampled world-space trails. High quality adds an opaque depth prepass for soft intersections.

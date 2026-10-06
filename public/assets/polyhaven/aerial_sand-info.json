@@ -1,0 +1,48 @@
+{
+  "scale": "15M x 15M",
+  "type": 1,
+  "tags": [
+    "sand",
+    "costal",
+    "seaside",
+    "ocean",
+    "sea"
+  ],
+  "date_published": 1581908332,
+  "name": "Aerial Sand",
+  "old_id": 242,
+  "categories": [
+    "terrain",
+    "sand",
+    "outdoor",
+    "natural",
+    "aerial"
+  ],
+  "authors": {
+    "Rob Tuytel": "All"
+  },
+  "dimensions": [
+    15000,
+    15000
+  ],
+  "max_resolution": [
+    8192,
+    8192
+  ],
+  "files_hash": "565565540b90dade32a407cdd8315dd05684d05e",
+  "description": "Free 8K texture of aerial coastal sand: tan, compacted ripples with tire and foot ruts, fine grain, rough bumps and subtle wet-dark patches.",
+  "category_id": "2262e1f2-20db-5ba4-9915-764041ba9c4c",
+  "category": "Ground & Terrain/Sand/Compacted & Trampled Sand",
+  "attributes": {
+    "surface_use": "ground",
+    "condition": [
+      "worn"
+    ],
+    "origin": "natural",
+    "setting": "outdoor",
+    "aerial": true
+  },
+  "img_version": "40159aed",
+  "download_count": 36947,
+  "thumbnail_url": "https://cdn.polyhaven.com/asset_img/thumbs/aerial_sand.png?width=256&height=256&format=webp&v=40159aed"
+}

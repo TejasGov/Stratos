@@ -9,6 +9,7 @@ import {
 } from "../render/OutdoorEnvironment";
 import { CloudLayers } from "../render/CloudLayers";
 import { RequestLedger, terrainTargets } from "./StreamingScheduler";
+import { TerrainMaterials } from "../render/TerrainMaterials";
 interface TerrainResult {
   requestId?: number;
   key: string;
@@ -39,10 +40,8 @@ export class World {
     type: "module",
   });
   private lastCell = "";
-  private mat = new T.MeshStandardMaterial({
-    vertexColors: true,
-    roughness: 0.95,
-  });
+  private terrainMaterials = new TerrainMaterials(this.origin);
+  private mat = this.terrainMaterials.material;
   private treeGeometry = new T.ConeGeometry(9, 34, 5);
   private treeMaterial = new T.MeshStandardMaterial({
     color: "#284a36",
@@ -78,30 +77,6 @@ export class World {
     this.sun.shadow.normalBias = 2;
     this.sun.shadow.bias = -0.0002;
     scene.add(this.sun, this.sun.target);
-    this.mat.onBeforeCompile = (shader) => {
-      shader.uniforms.terrainOrigin = { value: this.origin };
-      shader.vertexShader =
-        "uniform vec3 terrainOrigin; varying vec3 vTerrainPoint;\n" +
-        shader.vertexShader;
-      shader.vertexShader = shader.vertexShader.replace(
-        "#include <begin_vertex>",
-        "#include <begin_vertex>\nvTerrainPoint=(modelMatrix*vec4(position,1.)).xyz+terrainOrigin;",
-      );
-      shader.fragmentShader =
-        "varying vec3 vTerrainPoint;\nfloat terrainHash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}\nfloat terrainNoise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(terrainHash(i),terrainHash(i+vec2(1.,0.)),f.x),mix(terrainHash(i+vec2(0.,1.)),terrainHash(i+vec2(1.,1.)),f.x),f.y);}\n" +
-        shader.fragmentShader;
-      shader.fragmentShader = shader.fragmentShader.replace(
-        "#include <color_fragment>",
-        `#include <color_fragment>\nfloat detail=terrainNoise(vTerrainPoint.xz*.013)*.7+terrainNoise(vTerrainPoint.xz*.08)*.3;
-float slope=1.-abs(normalize(cross(dFdx(vTerrainPoint),dFdy(vTerrainPoint))).y);
-float shore=1.-smoothstep(5.,45.,vTerrainPoint.y);
-vec3 rock=vec3(.16,.15,.13)*(0.8+detail*.3);
-vec3 sand=vec3(.40,.34,.23)*(0.9+detail*.15);
-diffuseColor.rgb*=.82+detail*.32;
-diffuseColor.rgb=mix(diffuseColor.rgb,rock,smoothstep(.23,.62,slope)*.72);
-diffuseColor.rgb=mix(diffuseColor.rgb,sand,shore*.62);`,
-      );
-    };
     this.sky = createOutdoorSky();
     scene.add(this.sky);
     this.water = createOcean();
@@ -452,7 +427,14 @@ diffuseColor.rgb=mix(diffuseColor.rgb,sand,shore*.62);`,
     });
     this.chunks.delete(key);
   }
+  get materialsReady() {
+    return this.terrainMaterials.ready;
+  }
+  get materialError() {
+    return this.terrainMaterials.loadError;
+  }
   createEnvironment(renderer: T.WebGLRenderer) {
+    this.terrainMaterials.configure(renderer);
     const previous = this.environment;
     this.environment = createOutdoorEnvironment(renderer);
     this.scene.environment = this.environment.texture;
@@ -460,6 +442,7 @@ diffuseColor.rgb=mix(diffuseColor.rgb,sand,shore*.62);`,
     return this.environment.texture;
   }
   setQuality(quality: WorldQuality) {
+    this.terrainMaterials.setQuality(quality);
     this.clouds.setQuality(quality);
     this.sun.castShadow = quality !== "low";
     const size = quality === "high" ? 2048 : 1024;
@@ -504,7 +487,7 @@ diffuseColor.rgb=mix(diffuseColor.rgb,sand,shore*.62);`,
     this.sun.shadow.dispose();
     this.hemisphere.removeFromParent();
     for (const [key, g] of this.chunks) this.removeChunk(key, g);
-    this.mat.dispose();
+    this.terrainMaterials.dispose();
     this.treeGeometry.dispose();
     this.treeMaterial.dispose();
     this.buildingGeometry.dispose();

@@ -6,6 +6,9 @@ export interface Controls {
   yaw: number;
   throttle: number;
   boost: boolean;
+  /** World-space steering cue for mouse aim or the optional target-follow assist. */
+  aimDirection?: Vector3;
+  throttleTarget?: number;
 }
 export const neutral: Controls = {
   pitch: 0,
@@ -15,6 +18,7 @@ export const neutral: Controls = {
   boost: false,
 };
 export class Flight {
+  controlMode: "assisted" | "advanced" = "assisted";
   position = new Vector3(0, 1250, 2800);
   previous = this.position.clone();
   velocity = new Vector3(0, 0, -155);
@@ -37,6 +41,7 @@ export class Flight {
   private axis = new Vector3();
   private right = new Vector3();
   private up = new Vector3();
+  private assistedRotation = new Quaternion();
   reset(position?: { x: number; z: number }) {
     this.position.set(position?.x ?? 0, 1250, position?.z ?? 2800);
     this.position.y = Math.max(
@@ -63,51 +68,115 @@ export class Flight {
       0.08,
       1,
     );
+    if (
+      control.throttleTarget !== undefined &&
+      !control.throttle &&
+      !control.boost
+    )
+      this.throttle = MathUtils.damp(
+        this.throttle,
+        MathUtils.clamp(control.throttleTarget, 0.08, 1),
+        2,
+        dt,
+      );
     this.boost = control.boost && this.throttle > 0.15;
     this.forward.set(0, 0, -1).applyQuaternion(this.quaternion);
     this.right.set(1, 0, 0).applyQuaternion(this.quaternion);
     this.up.set(0, 1, 0).applyQuaternion(this.quaternion);
     const bank = Math.atan2(this.right.y, this.up.y);
     const authority = MathUtils.clamp(this.speed / 160, 0.45, 1.2);
-    // Local angular rates allow complete loops/rolls without Euler-angle limits.
-    const pitchRate =
-      control.pitch * 0.85 * authority +
-      (!control.pitch && this.up.y > 0 ? -Math.asin(this.forward.y) * 0.12 : 0);
-    const rollRate =
-      control.roll * 1.55 * authority +
-      (!control.roll && !control.pitch && Math.abs(this.forward.y) < 0.9
-        ? -bank * 1.7
-        : 0);
-    this.angularVelocity.x = MathUtils.damp(
-      this.angularVelocity.x,
-      pitchRate,
-      5,
-      dt,
-    );
-    this.angularVelocity.y = MathUtils.damp(
-      this.angularVelocity.y,
-      control.yaw * 0.35,
-      5,
-      dt,
-    );
-    this.angularVelocity.z = MathUtils.damp(
-      this.angularVelocity.z,
-      rollRate,
-      5,
-      dt,
-    );
-    const angularSpeed = this.angularVelocity.length();
-    if (angularSpeed > 1e-8) {
-      this.axis.copy(this.angularVelocity).multiplyScalar(1 / angularSpeed);
-      this.rotationStep.setFromAxisAngle(this.axis, angularSpeed * dt);
-      this.quaternion.multiply(this.rotationStep);
+    if (this.controlMode === "assisted") {
+      this.angles.setFromQuaternion(this.quaternion, "YXZ");
+      let desiredPitch = control.pitch
+        ? this.angles.x + control.pitch * 0.65 * dt
+        : MathUtils.damp(this.angles.x, 0, 1.8, dt);
+      let turn = (control.roll * 0.9 + control.yaw * 0.55) * authority;
+      if (control.aimDirection && control.aimDirection.lengthSq() > 0.5) {
+        const direction = control.aimDirection;
+        const desiredYaw = Math.atan2(-direction.x, -direction.z);
+        const error = Math.atan2(
+          Math.sin(desiredYaw - this.angles.y),
+          Math.cos(desiredYaw - this.angles.y),
+        );
+        turn = MathUtils.clamp(error * 3.5, -0.95, 0.95);
+        const targetPitch = Math.asin(MathUtils.clamp(direction.y, -1, 1));
+        desiredPitch =
+          this.angles.x +
+          MathUtils.clamp(targetPitch - this.angles.x, -0.7 * dt, 0.7 * dt);
+        // Target follow cannot steer the aircraft into the next terrain ridge.
+        const ahead = this.speed * 2;
+        const floor =
+          Math.max(
+            0,
+            heightAt(
+              this.position.x + direction.x * ahead,
+              this.position.z + direction.z * ahead,
+            ),
+          ) + 120;
+        if (this.position.y + direction.y * ahead < floor)
+          desiredPitch = Math.max(
+            desiredPitch,
+            Math.atan2(floor - this.position.y, ahead),
+          );
+      }
+      const desiredBank = MathUtils.clamp(turn * 0.48, -0.5, 0.5);
+      this.angles.set(
+        MathUtils.clamp(desiredPitch, -1.15, 1.15),
+        this.angles.y + turn * dt,
+        this.angles.z +
+          MathUtils.clamp(
+            MathUtils.damp(this.angles.z, desiredBank, 8, dt) - this.angles.z,
+            -1.1 * dt,
+            1.1 * dt,
+          ),
+        "YXZ",
+      );
+      this.assistedRotation.setFromEuler(this.angles);
+      this.quaternion.copy(this.assistedRotation).normalize();
+      this.angularVelocity.set(0, 0, 0);
+    } else {
+      // Local angular rates allow complete loops/rolls without Euler-angle limits.
+      const pitchRate =
+        control.pitch * 0.85 * authority +
+        (!control.pitch && this.up.y > 0
+          ? -Math.asin(this.forward.y) * 0.12
+          : 0);
+      const rollRate =
+        control.roll * 1.55 * authority +
+        (!control.roll && !control.pitch && Math.abs(this.forward.y) < 0.9
+          ? -bank * 1.7
+          : 0);
+      this.angularVelocity.x = MathUtils.damp(
+        this.angularVelocity.x,
+        pitchRate,
+        5,
+        dt,
+      );
+      this.angularVelocity.y = MathUtils.damp(
+        this.angularVelocity.y,
+        control.yaw * 0.35,
+        5,
+        dt,
+      );
+      this.angularVelocity.z = MathUtils.damp(
+        this.angularVelocity.z,
+        rollRate,
+        5,
+        dt,
+      );
+      const angularSpeed = this.angularVelocity.length();
+      if (angularSpeed > 1e-8) {
+        this.axis.copy(this.angularVelocity).multiplyScalar(1 / angularSpeed);
+        this.rotationStep.setFromAxisAngle(this.axis, angularSpeed * dt);
+        this.quaternion.multiply(this.rotationStep);
+      }
+      // Assisted coordinated turns apply about world up, reducing unintentional sideslip.
+      this.rotationStep.setFromAxisAngle(
+        this.axis.set(0, 1, 0),
+        Math.sin(bank) * 0.32 * dt,
+      );
+      this.quaternion.premultiply(this.rotationStep).normalize();
     }
-    // Assisted coordinated turns apply about world up, reducing unintentional sideslip.
-    this.rotationStep.setFromAxisAngle(
-      this.axis.set(0, 1, 0),
-      Math.sin(bank) * 0.32 * dt,
-    );
-    this.quaternion.premultiply(this.rotationStep).normalize();
     this.forward.set(0, 0, -1).applyQuaternion(this.quaternion);
     this.angles.setFromQuaternion(this.quaternion, "YXZ");
     this.pitch = this.angles.x;

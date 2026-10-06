@@ -80,6 +80,53 @@ export interface CombatEvent {
 export const PLAYER_ID = 0,
   ALLY_ID = -1;
 
+export const AIM_ASSIST = {
+  missileConeDegrees: 40,
+  missileRange: 5000,
+  acquireSeconds: 0.55,
+  cannonConeDegrees: 10,
+  cannonRange: 1800,
+  cannonSpeed: 1400,
+} as const;
+
+/** Constant-speed projectile interception with a bounded fallback for unreachable targets. */
+export function predictInterceptPosition(
+  origin: Vector3,
+  targetPosition: Vector3,
+  targetVelocity: Vector3,
+  projectileSpeed: number,
+  out: Vector3,
+  maxTime = 2,
+) {
+  const x = targetPosition.x - origin.x,
+    y = targetPosition.y - origin.y,
+    z = targetPosition.z - origin.z;
+  const a = targetVelocity.lengthSq() - projectileSpeed ** 2;
+  const b =
+    2 * (x * targetVelocity.x + y * targetVelocity.y + z * targetVelocity.z);
+  const c = x * x + y * y + z * z;
+  let time = Math.sqrt(c) / Math.max(1, projectileSpeed);
+  if (Math.abs(a) < 1e-8) {
+    if (Math.abs(b) > 1e-8 && -c / b >= 0) time = -c / b;
+  } else {
+    const discriminant = b * b - 4 * a * c;
+    if (discriminant >= 0) {
+      const root = Math.sqrt(discriminant);
+      const t1 = (-b - root) / (2 * a),
+        t2 = (-b + root) / (2 * a);
+      if (t1 >= 0 && t2 >= 0) time = Math.min(t1, t2);
+      else if (t1 >= 0) time = t1;
+      else if (t2 >= 0) time = t2;
+    }
+  }
+  return out
+    .copy(targetPosition)
+    .addScaledVector(
+      targetVelocity,
+      MathUtils.clamp(time, 0, Math.max(0, maxTime)),
+    );
+}
+
 /** Relative motion gives the closest approach of two swept objects in one step. */
 export function sweptMovingHit(
   from: Vector3,
@@ -143,6 +190,8 @@ export class CombatSystem {
   private kills = 0;
   private gunCooldown = 0;
   private missileCooldown = 0;
+  private missileRequest = false;
+  private missileRequestUntil = 0;
   private flareCooldown = 0;
   private previousInput = { ...combatNeutral };
   private events: CombatEvent[] = [];
@@ -157,6 +206,8 @@ export class CombatSystem {
   private forward = new Vector3();
   private point = new Vector3();
   private aim = new Vector3();
+  private assistDirection = new Vector3();
+  private assistForward = new Vector3();
   private targetQuaternion = new Quaternion();
   private readonly identityQuaternion = new Quaternion();
   private readonly localForward = new Vector3(0, 0, -1);
@@ -164,6 +215,61 @@ export class CombatSystem {
 
   get target() {
     return this.enemies.find((e) => e.id === this.selected && e.active) ?? null;
+  }
+  /** Selected target lead for optional bounded flight pursuit. No orientation mutation. */
+  getAimDirection(
+    player: CombatPlayer,
+    out: Vector3,
+    query?: CombatQuery,
+    leadSeconds = 0.35,
+  ): Vector3 | null {
+    const target = this.target;
+    if (
+      !target ||
+      !this.active ||
+      this.completed ||
+      this.failed ||
+      this.blocked(player.position, target.position, query)
+    )
+      return null;
+    out
+      .copy(target.position)
+      .addScaledVector(target.velocity, MathUtils.clamp(leadSeconds, 0, 1))
+      .sub(player.position);
+    return out.lengthSq() > 1e-6 ? out.normalize() : null;
+  }
+  /** Gun/HUD helper returns a global intercept point only inside the assisted cone and range. */
+  getGunAimPoint(
+    player: CombatPlayer,
+    out: Vector3,
+    query?: CombatQuery,
+  ): Vector3 | null {
+    const target = this.target;
+    if (!target || !this.active || this.completed || this.failed) return null;
+    this.assistDirection.copy(target.position).sub(player.position);
+    const range = this.assistDirection.length();
+    if (range > AIM_ASSIST.cannonRange || range < 1) return null;
+    this.assistForward
+      .copy(this.localForward)
+      .applyQuaternion(player.quaternion);
+    const cone = Math.cos(MathUtils.degToRad(AIM_ASSIST.cannonConeDegrees));
+    if (
+      this.assistDirection.multiplyScalar(1 / range).dot(this.assistForward) <
+        cone ||
+      this.blocked(player.position, target.position, query)
+    )
+      return null;
+    predictInterceptPosition(
+      player.position,
+      target.position,
+      target.velocity,
+      AIM_ASSIST.cannonSpeed,
+      out,
+      1.25,
+    );
+    this.assistDirection.copy(out).sub(player.position).normalize();
+    // Leading cannot steer the bullet farther than the documented cone.
+    return this.assistDirection.dot(this.assistForward) >= cone ? out : null;
   }
   get status() {
     const target = this.target;
@@ -269,13 +375,28 @@ export class CombatSystem {
     this.forward.normalize();
     const right = new Vector3(-this.forward.z, 0, this.forward.x);
     for (let i = 0; i < (type === "strike" ? 2 : 3); i++) {
+      const openingIntercept = type === "intercept";
       const position = player.position
         .clone()
-        .addScaledVector(this.forward, 1600 + i * 650)
-        .addScaledVector(right, i % 2 ? 430 : -260);
+        .addScaledVector(
+          this.forward,
+          (openingIntercept ? 1100 : 1600) + i * 650,
+        )
+        .addScaledVector(
+          right,
+          openingIntercept
+            ? i === 0
+              ? 50
+              : i % 2
+                ? 260
+                : -260
+            : i % 2
+              ? 430
+              : -260,
+        );
       position.y = Math.max(
-        player.position.y + 80 + i * 60,
-        this.ground(position.x, position.z) + 650,
+        player.position.y + (openingIntercept ? 15 : 80) + i * 60,
+        this.ground(position.x, position.z) + 450,
       );
       const e = this.entity(
         i + 1,
@@ -283,9 +404,13 @@ export class CombatSystem {
         "air",
         position,
       );
+      e.speed = openingIntercept ? 105 + i * 10 : 130;
+      e.cooldown = openingIntercept ? 20 + i * 3 : 15 + i * 2;
       e.quaternion.setFromUnitVectors(
         this.localForward,
-        this.direction.copy(player.position).sub(position).normalize(),
+        openingIntercept
+          ? this.forward
+          : this.direction.copy(player.position).sub(position).normalize(),
       );
       e.velocity
         .copy(this.localForward)
@@ -343,6 +468,8 @@ export class CombatSystem {
     this.missileAmmo = this.flares = 12;
     this.gunAmmo = 600;
     this.gunCooldown = this.missileCooldown = this.flareCooldown = 0;
+    this.missileRequest = false;
+    this.missileRequestUntil = 0;
     this.previousInput = { ...combatNeutral };
     this.events.length = 0;
     this.objective = this.result = "";
@@ -391,6 +518,11 @@ export class CombatSystem {
       return;
     }
     if (input.target && !this.previousInput.target) this.cycleTarget();
+    if (input.missile && !this.previousInput.missile) {
+      this.missileRequest = true;
+      this.missileRequestUntil = this.elapsed + 0.9;
+    }
+    if (this.elapsed > this.missileRequestUntil) this.missileRequest = false;
     if (!this.target) {
       this.selected = this.enemies.find((e) => e.active)?.id ?? 0;
       this.lockProgress = 0;
@@ -402,17 +534,14 @@ export class CombatSystem {
     if (input.gun && this.gunCooldown <= 0 && this.gunAmmo > 0) {
       this.forward.copy(this.localForward).applyQuaternion(player.quaternion);
       this.aim.copy(player.position).addScaledVector(this.forward, 12);
+      if (this.getGunAimPoint(player, this.desired, query))
+        this.forward.copy(this.desired).sub(this.aim).normalize();
       if (this.fireGun(this.aim, this.forward, false, PLAYER_ID)) {
         this.gunAmmo--;
         this.gunCooldown = 1 / 13;
       }
     }
-    if (
-      input.missile &&
-      !this.previousInput.missile &&
-      this.status.canFire &&
-      this.target
-    ) {
+    if (this.missileRequest && this.status.canFire && this.target) {
       this.forward.copy(this.localForward).applyQuaternion(player.quaternion);
       if (
         this.fireMissile(
@@ -425,6 +554,7 @@ export class CombatSystem {
       ) {
         this.missileAmmo--;
         this.missileCooldown = 1.1;
+        this.missileRequest = false;
       }
     }
     if (
@@ -494,19 +624,20 @@ export class CombatSystem {
     this.forward.copy(this.localForward).applyQuaternion(player.quaternion);
     const inCone =
       this.range > 0 &&
-      this.direction.multiplyScalar(1 / this.range).dot(this.forward) > 0.927;
+      this.direction.multiplyScalar(1 / this.range).dot(this.forward) >
+        Math.cos(MathUtils.degToRad(AIM_ASSIST.missileConeDegrees));
     const occluded =
-      this.range < 4200 &&
+      this.range < AIM_ASSIST.missileRange &&
       inCone &&
       this.blocked(player.position, target.position, query);
-    const visible = this.range < 4200 && inCone && !occluded;
+    const visible = this.range < AIM_ASSIST.missileRange && inCone && !occluded;
     this.lockProgress = MathUtils.clamp(
-      this.lockProgress + dt * (visible ? 1 / 1.15 : -2.5),
+      this.lockProgress + dt * (visible ? 1 / AIM_ASSIST.acquireSeconds : -1.5),
       0,
       1,
     );
     this.lockReason =
-      this.range >= 4200
+      this.range >= AIM_ASSIST.missileRange
         ? "Out of range"
         : !inCone
           ? "Align target"
@@ -549,7 +680,10 @@ export class CombatSystem {
     } else if (e.state === "recover" && e.position.y > clearance + 150) {
       e.state = "approach";
       e.stateTime = 0;
-    } else if (e.state === "patrol" && e.stateTime > 2) {
+    } else if (
+      e.state === "patrol" &&
+      e.stateTime > (this.active === "intercept" ? 12 : 4)
+    ) {
       e.state = "approach";
       e.stateTime = 0;
     } else if (e.state === "approach" && range < 1300) {
@@ -560,7 +694,7 @@ export class CombatSystem {
       e.stateTime = 0;
     } else if (
       (e.state === "extend" && e.stateTime > 5) ||
-      (e.state === "evade" && e.stateTime > 3)
+      (e.state === "evade" && e.stateTime > 1.5)
     ) {
       e.state = "approach";
       e.stateTime = 0;
@@ -569,6 +703,8 @@ export class CombatSystem {
       this.desired.copy(this.forward).setY(1.4).normalize();
     else if (e.state === "extend")
       this.desired.copy(this.forward).setY(0.15).normalize();
+    else if (e.state === "patrol" && this.active === "intercept")
+      this.desired.copy(this.forward);
     else if (e.state === "evade")
       this.desired
         .set(
@@ -588,7 +724,7 @@ export class CombatSystem {
     this.targetQuaternion.setFromUnitVectors(this.localForward, this.desired);
     e.quaternion.rotateTowards(
       this.targetQuaternion,
-      dt * (e.state === "recover" ? 0.8 : 0.58),
+      dt * (e.state === "recover" ? 0.8 : 0.38),
     );
     this.direction.copy(this.localForward).applyQuaternion(e.quaternion);
     e.velocity.lerp(
@@ -615,14 +751,14 @@ export class CombatSystem {
           e.id,
           victim === this.ally ? ALLY_ID : PLAYER_ID,
         );
-        e.cooldown = 10 + this.random() * 4;
+        e.cooldown = 14 + this.random() * 5;
       }
     }
     if (
       e.state === "attack" &&
       range < 850 &&
       e.cooldown < 8 &&
-      e.stateTime % 0.7 < dt
+      e.stateTime % 1.1 < dt
     ) {
       this.desired.copy(victim.position).sub(e.position).normalize();
       if (this.desired.dot(this.direction) > 0.98)
@@ -660,7 +796,7 @@ export class CombatSystem {
     bullet.age = 0;
     bullet.position.copy(position);
     bullet.previous.copy(position);
-    bullet.velocity.copy(direction).multiplyScalar(1400);
+    bullet.velocity.copy(direction).multiplyScalar(AIM_ASSIST.cannonSpeed);
     this.event("gun", position, owner, !hostile);
     return true;
   }
@@ -770,7 +906,7 @@ export class CombatSystem {
               ),
           );
       if (hit && !this.blocked(m.previous, m.position, query)) {
-        this.damageEntity(hit, m.hostile ? 28 : 65, player);
+        this.damageEntity(hit, m.hostile ? 20 : 65, player);
         this.event("explosion", m.position, m.id, !m.hostile, 0.6);
         m.active = false;
       } else if (this.blocked(m.previous, m.position, query)) {
@@ -807,7 +943,10 @@ export class CombatSystem {
     const e = target as CombatEntity;
     e.health = Math.max(0, e.health - damage);
     this.event("hit", e.position, e.id);
-    if (e.kind === "air") {
+    if (
+      e.kind === "air" &&
+      !(this.active === "intercept" && this.elapsed < 12)
+    ) {
       e.state = "evade";
       e.stateTime = 0;
     }

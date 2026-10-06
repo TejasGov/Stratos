@@ -39,6 +39,7 @@ test("relative-motion sweep catches crossing objects missed by frozen endpoints"
 });
 test("flight quaternion completes inverted loops and unrestricted rolls", () => {
   const f = new Flight();
+  f.controlMode = "advanced";
   f.position.y = 12000;
   f.previous.copy(f.position);
   let inverted = false,

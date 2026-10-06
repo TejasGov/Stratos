@@ -1,0 +1,916 @@
+{
+  "Diffuse": {
+    "8k": {
+      "jpg": {
+        "size": 17707052,
+        "md5": "1ef110ae45035206f06a83cb00980c86",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/8k/aerial_sand/aerial_sand_diff_8k.jpg"
+      },
+      "png": {
+        "size": 339034435,
+        "md5": "f8bf4032224b443cff4b4867d610be25",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/8k/aerial_sand/aerial_sand_diff_8k.png"
+      },
+      "exr": {
+        "size": 38373037,
+        "md5": "3fb05d1f49728432f7f269708223b426",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/8k/aerial_sand/aerial_sand_diff_8k.exr"
+      }
+    },
+    "4k": {
+      "jpg": {
+        "size": 5928126,
+        "md5": "421927b11af0314bb237cc584f89aaf0",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/aerial_sand/aerial_sand_diff_4k.jpg"
+      },
+      "png": {
+        "size": 94392476,
+        "md5": "977ab4629a1bd2d86fd37d504d7e4341",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/4k/aerial_sand/aerial_sand_diff_4k.png"
+      },
+      "exr": {
+        "size": 12134917,
+        "md5": "2ec39f7c2c18fa8bac85b75503285706",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/4k/aerial_sand/aerial_sand_diff_4k.exr"
+      }
+    },
+    "2k": {
+      "jpg": {
+        "size": 1790070,
+        "md5": "5071857be3645fec2f85b49e4112199f",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/aerial_sand/aerial_sand_diff_2k.jpg"
+      },
+      "png": {
+        "size": 24306893,
+        "md5": "b71d601ea63f9b3777bdf84e713764a1",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/2k/aerial_sand/aerial_sand_diff_2k.png"
+      },
+      "exr": {
+        "size": 3744428,
+        "md5": "4796639070d1d26d75d83d86550414b1",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/2k/aerial_sand/aerial_sand_diff_2k.exr"
+      }
+    },
+    "1k": {
+      "jpg": {
+        "size": 490916,
+        "md5": "717c892f44895790e6a39ced994e1598",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/aerial_sand/aerial_sand_diff_1k.jpg"
+      },
+      "png": {
+        "size": 6176901,
+        "md5": "55cd6f4a96adf90d74c9308230d03019",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/aerial_sand/aerial_sand_diff_1k.png"
+      },
+      "exr": {
+        "size": 1057191,
+        "md5": "a9b1f281caa65ba64565e1ddac26c56a",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/1k/aerial_sand/aerial_sand_diff_1k.exr"
+      }
+    }
+  },
+  "nor_dx": {
+    "8k": {
+      "jpg": {
+        "size": 55191350,
+        "md5": "7e94f4aed8fd23fdfa5aba61e99a46c3",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/8k/aerial_sand/aerial_sand_nor_dx_8k.jpg"
+      },
+      "png": {
+        "size": 332937379,
+        "md5": "04dd1996a6841efbeaaafb21e53db3e8",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/8k/aerial_sand/aerial_sand_nor_dx_8k.png"
+      },
+      "exr": {
+        "size": 128737014,
+        "md5": "26753e35f4f79e28a6d4ab164024fdc5",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/8k/aerial_sand/aerial_sand_nor_dx_8k.exr"
+      }
+    },
+    "4k": {
+      "jpg": {
+        "size": 11011203,
+        "md5": "f463e901ce63f16461bce9cc642f9217",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/aerial_sand/aerial_sand_nor_dx_4k.jpg"
+      },
+      "png": {
+        "size": 96223728,
+        "md5": "a408fa861202fdb8b5287ca4750ddc79",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/4k/aerial_sand/aerial_sand_nor_dx_4k.png"
+      },
+      "exr": {
+        "size": 27636508,
+        "md5": "b72780c3068745c20096ae9833213b7a",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/4k/aerial_sand/aerial_sand_nor_dx_4k.exr"
+      }
+    },
+    "2k": {
+      "jpg": {
+        "size": 2639180,
+        "md5": "8d3ec33fca282b3290b13dfb8b931177",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/aerial_sand/aerial_sand_nor_dx_2k.jpg"
+      },
+      "png": {
+        "size": 24305908,
+        "md5": "4d182d1b07fc89618bcc9e3b47c93da6",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/2k/aerial_sand/aerial_sand_nor_dx_2k.png"
+      },
+      "exr": {
+        "size": 7020659,
+        "md5": "cbd394f1e9188c7e8ab17aefc8407c26",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/2k/aerial_sand/aerial_sand_nor_dx_2k.exr"
+      }
+    },
+    "1k": {
+      "jpg": {
+        "size": 648259,
+        "md5": "a6a1dc321bbd0f63ee7e69ca38745bec",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/aerial_sand/aerial_sand_nor_dx_1k.jpg"
+      },
+      "png": {
+        "size": 6093477,
+        "md5": "3ef5c3ba3648087099d0499aa0654212",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/aerial_sand/aerial_sand_nor_dx_1k.png"
+      },
+      "exr": {
+        "size": 1793738,
+        "md5": "fcf58d09aa318d642732c89e7b80272e",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/1k/aerial_sand/aerial_sand_nor_dx_1k.exr"
+      }
+    }
+  },
+  "nor_gl": {
+    "8k": {
+      "jpg": {
+        "size": 54934644,
+        "md5": "a3d0e25e98b6c98a30474c1a163db1fb",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/8k/aerial_sand/aerial_sand_nor_gl_8k.jpg"
+      },
+      "png": {
+        "size": 333156328,
+        "md5": "94fa6b5f76706069d006b0ebe27cab55",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/8k/aerial_sand/aerial_sand_nor_gl_8k.png"
+      },
+      "exr": {
+        "size": 129298260,
+        "md5": "4e0c915d9134c4f23cc30c71e768aaa7",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/8k/aerial_sand/aerial_sand_nor_gl_8k.exr"
+      }
+    },
+    "4k": {
+      "jpg": {
+        "size": 11093320,
+        "md5": "09851181bfe229718cbc0dd771ed4171",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/aerial_sand/aerial_sand_nor_gl_4k.jpg"
+      },
+      "png": {
+        "size": 96224184,
+        "md5": "48e35360f63b29de5b5946cfd2267935",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/4k/aerial_sand/aerial_sand_nor_gl_4k.png"
+      },
+      "exr": {
+        "size": 27720274,
+        "md5": "bee57b17dd3ada3adf024cbb93e09d9a",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/4k/aerial_sand/aerial_sand_nor_gl_4k.exr"
+      }
+    },
+    "2k": {
+      "jpg": {
+        "size": 2679057,
+        "md5": "3e1b2d9ef1628fb5e0db05c69147cd06",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/aerial_sand/aerial_sand_nor_gl_2k.jpg"
+      },
+      "png": {
+        "size": 24305919,
+        "md5": "a61c32cb144b28555a03ffbad6c4b3b7",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/2k/aerial_sand/aerial_sand_nor_gl_2k.png"
+      },
+      "exr": {
+        "size": 7039607,
+        "md5": "641d15a584264260a95e0cc777afa928",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/2k/aerial_sand/aerial_sand_nor_gl_2k.exr"
+      }
+    },
+    "1k": {
+      "jpg": {
+        "size": 665488,
+        "md5": "094ef18a596f9b1de34264cd21f8c9d2",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/aerial_sand/aerial_sand_nor_gl_1k.jpg"
+      },
+      "png": {
+        "size": 6093377,
+        "md5": "11814cfaf17acaff463edd4b8aed9781",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/aerial_sand/aerial_sand_nor_gl_1k.png"
+      },
+      "exr": {
+        "size": 1799864,
+        "md5": "d690d2c97fe70ec746155fccd005884c",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/1k/aerial_sand/aerial_sand_nor_gl_1k.exr"
+      }
+    }
+  },
+  "blend": {
+    "8k": {
+      "blend": {
+        "size": 273955,
+        "md5": "76d1254ec623717f9b0cc8076f41d145",
+        "include": {
+          "textures/aerial_sand_nor_gl_8k.exr": {
+            "size": 129298260,
+            "md5": "4e0c915d9134c4f23cc30c71e768aaa7",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/8k/aerial_sand/aerial_sand_nor_gl_8k.exr"
+          },
+          "textures/aerial_sand_rough_8k.jpg": {
+            "size": 8039213,
+            "md5": "fe083bee082295428633eebbc7305aa3",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/8k/aerial_sand/aerial_sand_rough_8k.jpg"
+          },
+          "textures/aerial_sand_disp_8k.png": {
+            "size": 75652267,
+            "md5": "39641eb43a74017e23ea5a9c6f325a9e",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/8k/aerial_sand/aerial_sand_disp_8k.png"
+          },
+          "textures/aerial_sand_diff_8k.jpg": {
+            "size": 17707052,
+            "md5": "1ef110ae45035206f06a83cb00980c86",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/8k/aerial_sand/aerial_sand_diff_8k.jpg"
+          }
+        },
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/blend/8k/aerial_sand/aerial_sand_8k.blend"
+      }
+    },
+    "4k": {
+      "blend": {
+        "size": 273914,
+        "md5": "c41bf33cec189b069254323c47308b04",
+        "include": {
+          "textures/aerial_sand_diff_4k.jpg": {
+            "size": 5928126,
+            "md5": "421927b11af0314bb237cc584f89aaf0",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/aerial_sand/aerial_sand_diff_4k.jpg"
+          },
+          "textures/aerial_sand_disp_4k.png": {
+            "size": 28733013,
+            "md5": "7259239a767ebdaa918257ca8414d85a",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/4k/aerial_sand/aerial_sand_disp_4k.png"
+          },
+          "textures/aerial_sand_rough_4k.jpg": {
+            "size": 2687755,
+            "md5": "6a0cee15c0f147b2c82c4b882b51d821",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/aerial_sand/aerial_sand_rough_4k.jpg"
+          },
+          "textures/aerial_sand_nor_gl_4k.exr": {
+            "size": 27720274,
+            "md5": "bee57b17dd3ada3adf024cbb93e09d9a",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/4k/aerial_sand/aerial_sand_nor_gl_4k.exr"
+          }
+        },
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/blend/4k/aerial_sand/aerial_sand_4k.blend"
+      }
+    },
+    "2k": {
+      "blend": {
+        "size": 273739,
+        "md5": "6c0b8d4772b3b8ce042b4232d5a9e96c",
+        "include": {
+          "textures/aerial_sand_disp_2k.png": {
+            "size": 7569229,
+            "md5": "d9f79d8dcd767dd49b487e0e62ef5950",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/2k/aerial_sand/aerial_sand_disp_2k.png"
+          },
+          "textures/aerial_sand_nor_gl_2k.exr": {
+            "size": 7039607,
+            "md5": "641d15a584264260a95e0cc777afa928",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/2k/aerial_sand/aerial_sand_nor_gl_2k.exr"
+          },
+          "textures/aerial_sand_diff_2k.jpg": {
+            "size": 1790070,
+            "md5": "5071857be3645fec2f85b49e4112199f",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/aerial_sand/aerial_sand_diff_2k.jpg"
+          },
+          "textures/aerial_sand_rough_2k.jpg": {
+            "size": 756532,
+            "md5": "f8fe99fa041fbd9e8d76769da05f3a72",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/aerial_sand/aerial_sand_rough_2k.jpg"
+          }
+        },
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/blend/2k/aerial_sand/aerial_sand_2k.blend"
+      }
+    },
+    "1k": {
+      "blend": {
+        "size": 273905,
+        "md5": "ddf88e46e7af98b2d196a777927b316d",
+        "include": {
+          "textures/aerial_sand_diff_1k.jpg": {
+            "size": 490916,
+            "md5": "717c892f44895790e6a39ced994e1598",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/aerial_sand/aerial_sand_diff_1k.jpg"
+          },
+          "textures/aerial_sand_rough_1k.jpg": {
+            "size": 205159,
+            "md5": "2812f58e6f8b966d969bb2c2092c3484",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/aerial_sand/aerial_sand_rough_1k.jpg"
+          },
+          "textures/aerial_sand_disp_1k.png": {
+            "size": 2040000,
+            "md5": "a7393dc1df6164a28e6e405e970b9b24",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/aerial_sand/aerial_sand_disp_1k.png"
+          },
+          "textures/aerial_sand_nor_gl_1k.exr": {
+            "size": 1799864,
+            "md5": "d690d2c97fe70ec746155fccd005884c",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/1k/aerial_sand/aerial_sand_nor_gl_1k.exr"
+          }
+        },
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/blend/1k/aerial_sand/aerial_sand_1k.blend"
+      }
+    }
+  },
+  "gltf": {
+    "8k": {
+      "gltf": {
+        "size": 2686,
+        "md5": "50bdf8fcb4df8b1488287779496d6a9e",
+        "include": {
+          "aerial_sand.bin": {
+            "size": 2369492,
+            "md5": "eb1dd82bb20f3b1dc7131ba984a49fc2",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/gltf/8k/aerial_sand/aerial_sand.bin"
+          },
+          "textures/aerial_sand_rough_8k.jpg": {
+            "size": 8039213,
+            "md5": "fe083bee082295428633eebbc7305aa3",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/8k/aerial_sand/aerial_sand_rough_8k.jpg"
+          },
+          "textures/aerial_sand_diff_8k.jpg": {
+            "size": 17707052,
+            "md5": "1ef110ae45035206f06a83cb00980c86",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/8k/aerial_sand/aerial_sand_diff_8k.jpg"
+          },
+          "textures/aerial_sand_nor_gl_8k.jpg": {
+            "size": 54934644,
+            "md5": "a3d0e25e98b6c98a30474c1a163db1fb",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/8k/aerial_sand/aerial_sand_nor_gl_8k.jpg"
+          }
+        },
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/gltf/8k/aerial_sand/aerial_sand_8k.gltf"
+      }
+    },
+    "4k": {
+      "gltf": {
+        "size": 2686,
+        "md5": "0b3c7fa5036ffda4e868f34fbd00bba5",
+        "include": {
+          "aerial_sand.bin": {
+            "size": 2369492,
+            "md5": "eb1dd82bb20f3b1dc7131ba984a49fc2",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/gltf/8k/aerial_sand/aerial_sand.bin"
+          },
+          "textures/aerial_sand_diff_4k.jpg": {
+            "size": 5928126,
+            "md5": "421927b11af0314bb237cc584f89aaf0",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/aerial_sand/aerial_sand_diff_4k.jpg"
+          },
+          "textures/aerial_sand_rough_4k.jpg": {
+            "size": 2687755,
+            "md5": "6a0cee15c0f147b2c82c4b882b51d821",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/aerial_sand/aerial_sand_rough_4k.jpg"
+          },
+          "textures/aerial_sand_nor_gl_4k.jpg": {
+            "size": 11093320,
+            "md5": "09851181bfe229718cbc0dd771ed4171",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/aerial_sand/aerial_sand_nor_gl_4k.jpg"
+          }
+        },
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/gltf/4k/aerial_sand/aerial_sand_4k.gltf"
+      }
+    },
+    "2k": {
+      "gltf": {
+        "size": 2686,
+        "md5": "c913c49ee94054448c539222e6bf6a37",
+        "include": {
+          "aerial_sand.bin": {
+            "size": 2369492,
+            "md5": "eb1dd82bb20f3b1dc7131ba984a49fc2",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/gltf/8k/aerial_sand/aerial_sand.bin"
+          },
+          "textures/aerial_sand_nor_gl_2k.jpg": {
+            "size": 2679057,
+            "md5": "3e1b2d9ef1628fb5e0db05c69147cd06",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/aerial_sand/aerial_sand_nor_gl_2k.jpg"
+          },
+          "textures/aerial_sand_diff_2k.jpg": {
+            "size": 1790070,
+            "md5": "5071857be3645fec2f85b49e4112199f",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/aerial_sand/aerial_sand_diff_2k.jpg"
+          },
+          "textures/aerial_sand_rough_2k.jpg": {
+            "size": 756532,
+            "md5": "f8fe99fa041fbd9e8d76769da05f3a72",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/aerial_sand/aerial_sand_rough_2k.jpg"
+          }
+        },
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/gltf/2k/aerial_sand/aerial_sand_2k.gltf"
+      }
+    },
+    "1k": {
+      "gltf": {
+        "size": 2686,
+        "md5": "1178520a6fbd35414af12b863e61eba5",
+        "include": {
+          "textures/aerial_sand_diff_1k.jpg": {
+            "size": 490916,
+            "md5": "717c892f44895790e6a39ced994e1598",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/aerial_sand/aerial_sand_diff_1k.jpg"
+          },
+          "textures/aerial_sand_nor_gl_1k.jpg": {
+            "size": 665488,
+            "md5": "094ef18a596f9b1de34264cd21f8c9d2",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/aerial_sand/aerial_sand_nor_gl_1k.jpg"
+          },
+          "textures/aerial_sand_rough_1k.jpg": {
+            "size": 205159,
+            "md5": "2812f58e6f8b966d969bb2c2092c3484",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/aerial_sand/aerial_sand_rough_1k.jpg"
+          },
+          "aerial_sand.bin": {
+            "size": 2369492,
+            "md5": "eb1dd82bb20f3b1dc7131ba984a49fc2",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/gltf/8k/aerial_sand/aerial_sand.bin"
+          }
+        },
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/gltf/1k/aerial_sand/aerial_sand_1k.gltf"
+      }
+    }
+  },
+  "rough_ao": {
+    "8k": {
+      "jpg": {
+        "size": 81578574,
+        "md5": "b9a506594e5956613fe2ec69fac575a3",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/8k/aerial_sand/aerial_sand_rough_ao_8k.jpg"
+      },
+      "png": {
+        "size": 288696577,
+        "md5": "a96081260c79ad2be7d7e9b8a699338e",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/8k/aerial_sand/aerial_sand_rough_ao_8k.png"
+      },
+      "exr": {
+        "size": 152876567,
+        "md5": "44a97273586426cb7a326c256bb875b6",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/8k/aerial_sand/aerial_sand_rough_ao_8k.exr"
+      }
+    },
+    "4k": {
+      "jpg": {
+        "size": 12858147,
+        "md5": "2356724131ca38d6ad3ccd5ba3d6e893",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/aerial_sand/aerial_sand_rough_ao_4k.jpg"
+      },
+      "png": {
+        "size": 91009312,
+        "md5": "ab543a2f4e9e62eda11c778f186a1524",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/4k/aerial_sand/aerial_sand_rough_ao_4k.png"
+      },
+      "exr": {
+        "size": 31608319,
+        "md5": "44a958abf81a75b52b9dc885710b60cb",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/4k/aerial_sand/aerial_sand_rough_ao_4k.exr"
+      }
+    },
+    "2k": {
+      "jpg": {
+        "size": 2714022,
+        "md5": "9caa49fb1200e2c3a372cf863425fd98",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/aerial_sand/aerial_sand_rough_ao_2k.jpg"
+      },
+      "png": {
+        "size": 22946991,
+        "md5": "ed7572399b7c844af44f280760363198",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/2k/aerial_sand/aerial_sand_rough_ao_2k.png"
+      },
+      "exr": {
+        "size": 7254486,
+        "md5": "890f52313ced41829c819d2f2398fb4b",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/2k/aerial_sand/aerial_sand_rough_ao_2k.exr"
+      }
+    },
+    "1k": {
+      "jpg": {
+        "size": 647431,
+        "md5": "be8a96651cd3a867bdf0fbdf5c08e0e3",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/aerial_sand/aerial_sand_rough_ao_1k.jpg"
+      },
+      "png": {
+        "size": 5789601,
+        "md5": "a694ffa999100476f3f5b7e43a7ae4cb",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/aerial_sand/aerial_sand_rough_ao_1k.png"
+      },
+      "exr": {
+        "size": 1760824,
+        "md5": "884d7f33c5c80c4c10a4316db28fe603",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/1k/aerial_sand/aerial_sand_rough_ao_1k.exr"
+      }
+    }
+  },
+  "arm": {
+    "8k": {
+      "jpg": {
+        "size": 17376151,
+        "md5": "6a606b58192d6ec56a661c5827995ae5",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/8k/aerial_sand/aerial_sand_arm_8k.jpg"
+      },
+      "png": {
+        "size": 246642925,
+        "md5": "4800b5fe45b576245661c17ca251eb85",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/8k/aerial_sand/aerial_sand_arm_8k.png"
+      },
+      "exr": {
+        "size": 130848836,
+        "md5": "89604f4221cb2f71133c8c64b2178e76",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/8k/aerial_sand/aerial_sand_arm_8k.exr"
+      }
+    },
+    "4k": {
+      "jpg": {
+        "size": 3081359,
+        "md5": "e061c2ef5d42ee368b0eaae348618fe2",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/aerial_sand/aerial_sand_arm_4k.jpg"
+      },
+      "png": {
+        "size": 68990070,
+        "md5": "b6e86052e6d22cee5b38264af8769787",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/4k/aerial_sand/aerial_sand_arm_4k.png"
+      },
+      "exr": {
+        "size": 29360222,
+        "md5": "8781c4bc1b6de98190f93bac324796ef",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/4k/aerial_sand/aerial_sand_arm_4k.exr"
+      }
+    },
+    "2k": {
+      "jpg": {
+        "size": 718127,
+        "md5": "b80407b993254ca9997e1e16561df594",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/aerial_sand/aerial_sand_arm_2k.jpg"
+      },
+      "png": {
+        "size": 17298790,
+        "md5": "1c8fd62d24c6b052a59386ef6e04e54c",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/2k/aerial_sand/aerial_sand_arm_2k.png"
+      },
+      "exr": {
+        "size": 6522105,
+        "md5": "b5fe36f62b84b6e43dadab76a6498244",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/2k/aerial_sand/aerial_sand_arm_2k.exr"
+      }
+    },
+    "1k": {
+      "jpg": {
+        "size": 184628,
+        "md5": "20fc1e4fec253dbefb013cfb08cf330d",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/aerial_sand/aerial_sand_arm_1k.jpg"
+      },
+      "png": {
+        "size": 4359156,
+        "md5": "460667b5f6d3985ffb32b9872ae990fd",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/aerial_sand/aerial_sand_arm_1k.png"
+      },
+      "exr": {
+        "size": 1583246,
+        "md5": "0c61e1cd5f7881d57f55627c48bf88c1",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/1k/aerial_sand/aerial_sand_arm_1k.exr"
+      }
+    }
+  },
+  "AO": {
+    "8k": {
+      "jpg": {
+        "size": 43620477,
+        "md5": "8eb6f697444f6fcd72423a8caa89d11c",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/8k/aerial_sand/aerial_sand_ao_8k.jpg"
+      },
+      "png": {
+        "size": 232657277,
+        "md5": "0637726d91b029f5f7194bda68222e47",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/8k/aerial_sand/aerial_sand_ao_8k.png"
+      },
+      "exr": {
+        "size": 61767563,
+        "md5": "6baa1c239725e2caa76b05d33e4f9e4d",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/8k/aerial_sand/aerial_sand_ao_8k.exr"
+      }
+    },
+    "4k": {
+      "jpg": {
+        "size": 8899002,
+        "md5": "d657aba94a6e87a2b26a5e8465848ab4",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/aerial_sand/aerial_sand_ao_4k.jpg"
+      },
+      "png": {
+        "size": 37982328,
+        "md5": "f3dd0511387598fb6f6bba0382466a2d",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/4k/aerial_sand/aerial_sand_ao_4k.png"
+      },
+      "exr": {
+        "size": 14202812,
+        "md5": "c2260cb291c772d5bda98f93973f182c",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/4k/aerial_sand/aerial_sand_ao_4k.exr"
+      }
+    },
+    "2k": {
+      "jpg": {
+        "size": 1960685,
+        "md5": "78c6b9b5e6282ff4f7613630091d180b",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/aerial_sand/aerial_sand_ao_2k.jpg"
+      },
+      "png": {
+        "size": 9311602,
+        "md5": "977ce45e9134f73a0f7a9f9dbe9c5c41",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/2k/aerial_sand/aerial_sand_ao_2k.png"
+      },
+      "exr": {
+        "size": 3411525,
+        "md5": "155a006b166af04e81a5acb20c9bf7f9",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/2k/aerial_sand/aerial_sand_ao_2k.exr"
+      }
+    },
+    "1k": {
+      "jpg": {
+        "size": 470122,
+        "md5": "5fd7816c7e11bb629b8da0b7359f038c",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/aerial_sand/aerial_sand_ao_1k.jpg"
+      },
+      "png": {
+        "size": 2320593,
+        "md5": "0f504b7a794dc445091ffb43f93970cf",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/aerial_sand/aerial_sand_ao_1k.png"
+      },
+      "exr": {
+        "size": 864831,
+        "md5": "4b574785c8a571e3be8b2c347b63d4cf",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/1k/aerial_sand/aerial_sand_ao_1k.exr"
+      }
+    }
+  },
+  "Displacement": {
+    "8k": {
+      "jpg": {
+        "size": 5122162,
+        "md5": "42057b2b03d30007852bd6868db0c3ef",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/8k/aerial_sand/aerial_sand_disp_8k.jpg"
+      },
+      "png": {
+        "size": 75652267,
+        "md5": "39641eb43a74017e23ea5a9c6f325a9e",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/8k/aerial_sand/aerial_sand_disp_8k.png"
+      },
+      "exr": {
+        "size": 9810512,
+        "md5": "97c8909f2b37266f00b3a67e26039edb",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/8k/aerial_sand/aerial_sand_disp_8k.exr"
+      }
+    },
+    "4k": {
+      "jpg": {
+        "size": 1740387,
+        "md5": "527cec9f1709b316b3f3d4c743f2eb9a",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/aerial_sand/aerial_sand_disp_4k.jpg"
+      },
+      "png": {
+        "size": 28733013,
+        "md5": "7259239a767ebdaa918257ca8414d85a",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/4k/aerial_sand/aerial_sand_disp_4k.png"
+      },
+      "exr": {
+        "size": 3376044,
+        "md5": "6c4472a159334cd3759ad1e9137e8cef",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/4k/aerial_sand/aerial_sand_disp_4k.exr"
+      }
+    },
+    "2k": {
+      "jpg": {
+        "size": 603813,
+        "md5": "d62a5c140be9c45fa3e75f0abe825444",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/aerial_sand/aerial_sand_disp_2k.jpg"
+      },
+      "png": {
+        "size": 7569229,
+        "md5": "d9f79d8dcd767dd49b487e0e62ef5950",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/2k/aerial_sand/aerial_sand_disp_2k.png"
+      },
+      "exr": {
+        "size": 1174488,
+        "md5": "d3c96546d9aa46ca0f077b9a690a2d66",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/2k/aerial_sand/aerial_sand_disp_2k.exr"
+      }
+    },
+    "1k": {
+      "jpg": {
+        "size": 209123,
+        "md5": "3eb71a40c621129ee7c70fa2714b15be",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/aerial_sand/aerial_sand_disp_1k.jpg"
+      },
+      "png": {
+        "size": 2040000,
+        "md5": "a7393dc1df6164a28e6e405e970b9b24",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/aerial_sand/aerial_sand_disp_1k.png"
+      },
+      "exr": {
+        "size": 410663,
+        "md5": "590a31e97722747f65f6bdc1e812ca10",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/1k/aerial_sand/aerial_sand_disp_1k.exr"
+      }
+    }
+  },
+  "Rough": {
+    "8k": {
+      "jpg": {
+        "size": 8039213,
+        "md5": "fe083bee082295428633eebbc7305aa3",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/8k/aerial_sand/aerial_sand_rough_8k.jpg"
+      },
+      "png": {
+        "size": 108599923,
+        "md5": "704b2f66370ad4e28ed8827e605bfaf5",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/8k/aerial_sand/aerial_sand_rough_8k.png"
+      },
+      "exr": {
+        "size": 12754895,
+        "md5": "a57566b86c45af3414d3c9e18c9e02bc",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/8k/aerial_sand/aerial_sand_rough_8k.exr"
+      }
+    },
+    "4k": {
+      "jpg": {
+        "size": 2687755,
+        "md5": "6a0cee15c0f147b2c82c4b882b51d821",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/aerial_sand/aerial_sand_rough_4k.jpg"
+      },
+      "png": {
+        "size": 30717505,
+        "md5": "d75c32f18b06baad7678754f11ce91c1",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/4k/aerial_sand/aerial_sand_rough_4k.png"
+      },
+      "exr": {
+        "size": 4410096,
+        "md5": "dbf8daa1a01055127ec77c48013a9e5c",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/4k/aerial_sand/aerial_sand_rough_4k.exr"
+      }
+    },
+    "2k": {
+      "jpg": {
+        "size": 756532,
+        "md5": "f8fe99fa041fbd9e8d76769da05f3a72",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/aerial_sand/aerial_sand_rough_2k.jpg"
+      },
+      "png": {
+        "size": 7922412,
+        "md5": "05615ef0381439a918996869fedc85b4",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/2k/aerial_sand/aerial_sand_rough_2k.png"
+      },
+      "exr": {
+        "size": 1337449,
+        "md5": "82b3cdb82a4fcea9a71abf47665b1c23",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/2k/aerial_sand/aerial_sand_rough_2k.exr"
+      }
+    },
+    "1k": {
+      "jpg": {
+        "size": 205159,
+        "md5": "2812f58e6f8b966d969bb2c2092c3484",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/aerial_sand/aerial_sand_rough_1k.jpg"
+      },
+      "png": {
+        "size": 2018770,
+        "md5": "804fe445b3df3b0d5967599393315c4e",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/aerial_sand/aerial_sand_rough_1k.png"
+      },
+      "exr": {
+        "size": 374276,
+        "md5": "2182980badde0430354014399ba2874d",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/1k/aerial_sand/aerial_sand_rough_1k.exr"
+      }
+    }
+  },
+  "mtlx": {
+    "8k": {
+      "mtlx": {
+        "size": 4690,
+        "md5": "6d22037b62a5b2b591839bfde9a89e38",
+        "include": {
+          "textures/aerial_sand_nor_gl_8k.exr": {
+            "size": 129298260,
+            "md5": "4e0c915d9134c4f23cc30c71e768aaa7",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/8k/aerial_sand/aerial_sand_nor_gl_8k.exr"
+          },
+          "textures/aerial_sand_rough_8k.jpg": {
+            "size": 8039213,
+            "md5": "fe083bee082295428633eebbc7305aa3",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/8k/aerial_sand/aerial_sand_rough_8k.jpg"
+          },
+          "textures/aerial_sand_disp_8k.png": {
+            "size": 75652267,
+            "md5": "39641eb43a74017e23ea5a9c6f325a9e",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/8k/aerial_sand/aerial_sand_disp_8k.png"
+          },
+          "textures/aerial_sand_diff_8k.jpg": {
+            "size": 17707052,
+            "md5": "1ef110ae45035206f06a83cb00980c86",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/8k/aerial_sand/aerial_sand_diff_8k.jpg"
+          }
+        },
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/mtlx/8k/aerial_sand/aerial_sand_8k.mtlx"
+      }
+    },
+    "4k": {
+      "mtlx": {
+        "size": 4690,
+        "md5": "a8abac225d56ec6cf9a87c23bbe12852",
+        "include": {
+          "textures/aerial_sand_diff_4k.jpg": {
+            "size": 5928126,
+            "md5": "421927b11af0314bb237cc584f89aaf0",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/aerial_sand/aerial_sand_diff_4k.jpg"
+          },
+          "textures/aerial_sand_disp_4k.png": {
+            "size": 28733013,
+            "md5": "7259239a767ebdaa918257ca8414d85a",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/4k/aerial_sand/aerial_sand_disp_4k.png"
+          },
+          "textures/aerial_sand_rough_4k.jpg": {
+            "size": 2687755,
+            "md5": "6a0cee15c0f147b2c82c4b882b51d821",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/aerial_sand/aerial_sand_rough_4k.jpg"
+          },
+          "textures/aerial_sand_nor_gl_4k.exr": {
+            "size": 27720274,
+            "md5": "bee57b17dd3ada3adf024cbb93e09d9a",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/4k/aerial_sand/aerial_sand_nor_gl_4k.exr"
+          }
+        },
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/mtlx/4k/aerial_sand/aerial_sand_4k.mtlx"
+      }
+    },
+    "2k": {
+      "mtlx": {
+        "size": 4690,
+        "md5": "a7c9c5b8c3aa3748badefd10ff486f8c",
+        "include": {
+          "textures/aerial_sand_disp_2k.png": {
+            "size": 7569229,
+            "md5": "d9f79d8dcd767dd49b487e0e62ef5950",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/2k/aerial_sand/aerial_sand_disp_2k.png"
+          },
+          "textures/aerial_sand_nor_gl_2k.exr": {
+            "size": 7039607,
+            "md5": "641d15a584264260a95e0cc777afa928",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/2k/aerial_sand/aerial_sand_nor_gl_2k.exr"
+          },
+          "textures/aerial_sand_diff_2k.jpg": {
+            "size": 1790070,
+            "md5": "5071857be3645fec2f85b49e4112199f",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/aerial_sand/aerial_sand_diff_2k.jpg"
+          },
+          "textures/aerial_sand_rough_2k.jpg": {
+            "size": 756532,
+            "md5": "f8fe99fa041fbd9e8d76769da05f3a72",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/aerial_sand/aerial_sand_rough_2k.jpg"
+          }
+        },
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/mtlx/2k/aerial_sand/aerial_sand_2k.mtlx"
+      }
+    },
+    "1k": {
+      "mtlx": {
+        "size": 4690,
+        "md5": "205f9f9b81dbb74cda65db5c07004a47",
+        "include": {
+          "textures/aerial_sand_diff_1k.jpg": {
+            "size": 490916,
+            "md5": "717c892f44895790e6a39ced994e1598",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/aerial_sand/aerial_sand_diff_1k.jpg"
+          },
+          "textures/aerial_sand_rough_1k.jpg": {
+            "size": 205159,
+            "md5": "2812f58e6f8b966d969bb2c2092c3484",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/aerial_sand/aerial_sand_rough_1k.jpg"
+          },
+          "textures/aerial_sand_disp_1k.png": {
+            "size": 2040000,
+            "md5": "a7393dc1df6164a28e6e405e970b9b24",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/aerial_sand/aerial_sand_disp_1k.png"
+          },
+          "textures/aerial_sand_nor_gl_1k.exr": {
+            "size": 1799864,
+            "md5": "d690d2c97fe70ec746155fccd005884c",
+            "url": "https://dl.polyhaven.org/file/ph-assets/Textures/exr/1k/aerial_sand/aerial_sand_nor_gl_1k.exr"
+          }
+        },
+        "url": "https://dl.polyhaven.org/file/ph-assets/Textures/mtlx/1k/aerial_sand/aerial_sand_1k.mtlx"
+      }
+    }
+  }
+}

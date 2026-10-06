@@ -48,6 +48,36 @@ export function createUI() {
       "beforeend",
       `<span id="combat-ally" hidden>TRANSPORT <b id="combat-ally-health">100%</b></span>`,
     );
+  document
+    .querySelector("#settings label")!
+    .insertAdjacentHTML(
+      "beforebegin",
+      `<label>Flight controls<select id="control-mode"><option value="assisted">Easy — direct steering & auto level</option><option value="advanced">Advanced — bank, loops & rolls</option></select></label>`,
+    );
+  document.querySelector(".flight-hints")!.innerHTML =
+    `<span><kbd>W S</kbd> CLIMB / DESCEND</span><span><kbd>A D</kbd> <b id="flight-turn-hint">TURN</b></span><span><kbd>G</kbd> FOLLOW TARGET</span><span><kbd>SPACE</kbd> BOOST</span><span><kbd>ESC</kbd> PAUSE</span>`;
+  document
+    .querySelector("#combat-hints")!
+    .insertAdjacentHTML(
+      "afterend",
+      `<button id="target-follow" class="follow-button" aria-pressed="false">G · FOLLOW TARGET</button>`,
+    );
+  document
+    .querySelector("#hud")!
+    .insertAdjacentHTML(
+      "beforeend",
+      `<div id="lead-marker" class="lead-marker" aria-label="Cannon lead aim point" hidden><span>⊕</span><small>AIM</small></div>`,
+    );
+  document.querySelector("#controls form > p")!.textContent =
+    "Easy controls: A/D turns directly; release the keys to level out. W/S climbs or descends. Move the mouse over the sky to steer. Combat starts with target follow enabled; manual steering takes over.";
+  document
+    .querySelector("#controls .control-list")!
+    .insertAdjacentHTML(
+      "beforeend",
+      `<span><kbd>G</kbd> Toggle target follow (Easy mode)</span><span><kbd>LEFT CLICK</kbd> Cannon</span><span><kbd>RIGHT CLICK</kbd> Missile — tap to queue while locking</span>`,
+    );
+  document.querySelector("#controls .dialog-note")!.textContent +=
+    " The AIM circle shows where to lead your cannon shots. Advanced controls in Settings restore full aerobatics.";
 }
 export const el = <T extends HTMLElement = HTMLElement>(id: string) =>
   document.getElementById(id) as T;

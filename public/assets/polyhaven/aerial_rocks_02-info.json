@@ -1,0 +1,53 @@
+{
+  "scale": "50x50M",
+  "type": 1,
+  "tags": [
+    "rocks",
+    "rough",
+    "moss",
+    "cliff",
+    "rock face",
+    "cave"
+  ],
+  "date_published": 1600274572,
+  "name": "Aerial Rocks 02",
+  "old_id": 283,
+  "categories": [
+    "terrain",
+    "outdoor",
+    "natural",
+    "rock",
+    "aerial"
+  ],
+  "authors": {
+    "Rob Tuytel": "All"
+  },
+  "dimensions": [
+    50000,
+    50000
+  ],
+  "max_resolution": [
+    8192,
+    8192
+  ],
+  "sponsors": [
+    "128081732"
+  ],
+  "files_hash": "76c3c2d202e28839b72e336a5b1839e58e2da2e3",
+  "description": "Free 8K texture of rough weathered cliff rock, showing coarse stone faces, deep fractures and patches of green moss.",
+  "category_id": "bf84369c-cc7c-5347-ad17-173353e859b8",
+  "category": "Stone/Rock & Cliffs/Rough Rock Faces",
+  "attributes": {
+    "surface_use": "ground",
+    "condition": [
+      "mossy",
+      "weathered"
+    ],
+    "origin": "natural",
+    "setting": "outdoor",
+    "aerial": true
+  },
+  "img_version": "8146a458",
+  "download_count": 400458,
+  "thumbnail_url": "https://cdn.polyhaven.com/asset_img/thumbs/aerial_rocks_02.png?width=256&height=256&format=webp&v=8146a458"
+}

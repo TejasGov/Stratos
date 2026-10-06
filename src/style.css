@@ -1158,6 +1158,42 @@ dialog {
   max-height: 88vh;
   overflow-y: auto;
 }
+.follow-button {
+  pointer-events: auto;
+  width: 100%;
+  border: 1px solid #c6e79a66;
+  background: #123c40;
+  color: #e4f3d9;
+  padding: 10px;
+  margin-top: 4px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+}
+.follow-button[aria-pressed="true"] {
+  background: #c6e79a;
+  color: #102e32;
+}
+.lead-marker {
+  position: fixed;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  color: #eeffb7;
+  text-align: center;
+  text-shadow: 0 1px 4px #123;
+}
+.lead-marker span {
+  display: block;
+  font-size: 24px;
+}
+.lead-marker small {
+  font: 9px monospace;
+}
+.objective {
+  text-shadow: 0 1px 4px #102e32;
+}
+.flight-hints b {
+  font-weight: 400;
+}
 .waypoint {
   transform: translate(-50%, -50%);
 }

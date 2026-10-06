@@ -34,6 +34,7 @@ interface Save {
   bindings?: Partial<Record<CombatAction, string>>;
   shake?: boolean;
   hudScale?: number;
+  controlMode?: "assisted" | "advanced";
 }
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 createUI();
@@ -64,6 +65,7 @@ class Game {
     sensitivity: 1,
     shake: !reducedMotion,
     hudScale: 1,
+    controlMode: "assisted" as "assisted" | "advanced",
   };
   savePosition?: { x: number; z: number };
   private last = 0;
@@ -82,6 +84,12 @@ class Game {
   private damageEmitters = new Set<string>();
   private queryPoint = new T.Vector3();
   private workerNotice = false;
+  private targetFollow = false;
+  private mouseGun = false;
+  private mouseSteering = false;
+  private mouseAim = new T.Vector2();
+  private steeringDirection = new T.Vector3();
+  private leadPoint = new T.Vector3();
   private cameraReady = false;
   private toastAnimation?: ReturnType<typeof createTimeline>;
   private ringGroup = new T.Group();
@@ -164,6 +172,11 @@ class Game {
       this.plane.add(model);
       this.combatView.setAircraftTemplate(model);
       await this.physicsReady;
+      await this.world.materialsReady;
+      if (this.world.materialError)
+        throw new Error(
+          `Terrain textures failed to load: ${this.world.materialError}`,
+        );
       await this.renderer.compileAsync(this.scene, this.camera);
       this.loaded = true;
       el<HTMLButtonElement>("start").disabled = false;
@@ -200,6 +213,8 @@ class Game {
     el("hud").setAttribute("aria-hidden", String(state === "menu"));
     this.keys.clear();
     this.inputActions.clear();
+    this.mouseGun = false;
+    this.mouseSteering = false;
     this.accumulator = 0;
     el("top-status").textContent =
       state === "menu"
@@ -211,6 +226,48 @@ class Game {
             : "FLIGHT ENDED";
   }
   private bindUI() {
+    el("target-follow").onclick = () => this.toggleTargetFollow();
+    el<HTMLSelectElement>("control-mode").onchange = (event) => {
+      this.settings.controlMode = (event.target as HTMLSelectElement).value as
+        "assisted" | "advanced";
+      this.flight.controlMode = this.settings.controlMode;
+      this.targetFollow = false;
+      this.mouseSteering = false;
+      this.syncSettings();
+      this.save();
+    };
+    const canvas = this.renderer.domElement;
+    canvas.addEventListener("pointermove", (event) => {
+      if (
+        this.state !== "flight" ||
+        this.settings.controlMode !== "assisted" ||
+        this.targetFollow
+      )
+        return;
+      const bounds = canvas.getBoundingClientRect();
+      this.mouseAim.set(
+        ((event.clientX - bounds.left) / bounds.width) * 2 - 1,
+        1 - ((event.clientY - bounds.top) / bounds.height) * 2,
+      );
+      this.mouseSteering = true;
+      this.targetFollow = false;
+    });
+    canvas.addEventListener("pointerdown", (event) => {
+      if (this.state !== "flight") return;
+      event.preventDefault();
+      if (event.button === 0) {
+        this.mouseGun = true;
+        this.inputActions.queue("gun");
+      } else if (event.button === 2) this.inputActions.queue("missile");
+    });
+    window.addEventListener("pointerup", () => {
+      this.mouseGun = false;
+    });
+    canvas.addEventListener("pointerleave", () => {
+      this.mouseSteering = false;
+      this.mouseGun = false;
+    });
+    canvas.addEventListener("contextmenu", (event) => event.preventDefault());
     document
       .querySelectorAll<HTMLButtonElement>("[data-combat]")
       .forEach((button) => {
@@ -302,18 +359,33 @@ class Game {
         else if (this.state === "paused") this.resume();
         return;
       }
+      if (this.state === "crashed" && e.code === "KeyR" && !e.repeat) {
+        this.restart();
+        return;
+      }
       if (this.state !== "flight") return;
+      if (
+        e.code === "KeyG" &&
+        !e.repeat &&
+        !Object.values(this.inputActions.bindings).includes(e.code)
+      ) {
+        e.preventDefault();
+        this.toggleTargetFollow();
+        return;
+      }
       if (Object.values(this.inputActions.bindings).includes(e.code))
         e.preventDefault();
       if (e.code === "KeyB" && !e.repeat) {
         if (this.combat.active) {
           this.combat.stop();
+          this.targetFollow = false;
           this.combatView.clear();
           this.toast("Combat patrol ended. Continue exploring.", "FREE FLIGHT");
         } else {
           this.mission.stop();
           this.buildRings();
           this.combat.start("intercept", this.flight);
+          this.targetFollow = this.settings.controlMode === "assisted";
           this.toast(
             "Acquire the incoming flight, then hold lock and fire.",
             "INTERCEPT PATROL",
@@ -391,10 +463,12 @@ class Game {
       this.flight.reset({ x: gate.x, z: gate.z + 700 });
       this.flight.position.y = gate.y;
       this.flight.previous.copy(this.flight.position);
-    } else this.flight.reset(this.savePosition);
+    } else this.flight.reset(combatMission ? undefined : this.savePosition);
     if (combatMission) this.combat.start(combatMission, this.flight);
     this.cameraReady = false;
     this.setState("flight");
+    this.targetFollow =
+      !!combatMission && this.settings.controlMode === "assisted";
     this.audio.start().catch(() => {
       this.audio.enabled = false;
       this.syncSettings();
@@ -403,7 +477,7 @@ class Game {
     this.updateObjective();
     this.toast(
       combatMission
-        ? `${this.inputActions.bindings.target.slice(3)} target · ${this.inputActions.bindings.gun.slice(3)} cannon · ${this.inputActions.bindings.missile.slice(3)} missile · ${this.inputActions.bindings.flare.slice(3)} countermeasure. Watch your threat warning.`
+        ? `Target follow is ${this.targetFollow ? "ON" : "OFF"}. Left click / ${this.inputActions.bindings.gun.slice(3)} cannon · right click / ${this.inputActions.bindings.missile.slice(3)} missile. G toggles follow; WASD takes manual control.`
         : route
           ? routes[route].description
           : "Welcome to Haven. The horizon is yours.",
@@ -444,11 +518,77 @@ class Game {
     this.updateDiscovery();
   }
   private input() {
-    return this.inputActions.sample(
+    const controls = this.inputActions.sample(
       this.keys,
       this.settings.invert,
       this.settings.sensitivity,
       navigator.getGamepads ? Array.from(navigator.getGamepads()) : [],
+    );
+    if (this.settings.controlMode === "assisted") {
+      const manual =
+        Math.abs(controls.pitch) +
+          Math.abs(controls.roll) +
+          Math.abs(controls.yaw) >
+        0.1;
+      if (manual) {
+        this.targetFollow = false;
+        this.mouseSteering = false;
+      } else if (
+        this.targetFollow &&
+        this.combat.active &&
+        !this.combat.completed &&
+        !this.combat.failed
+      ) {
+        const direction = this.combat.getAimDirection(
+          this.flight,
+          this.steeringDirection,
+          { blocked: (a, b) => this.combatBlocked(a, b) },
+        );
+        if (direction) {
+          controls.aimDirection = direction;
+          const target = this.combat.target;
+          if (target?.kind === "air" && !controls.throttle && !controls.boost) {
+            const range = target.position.distanceTo(this.flight.position);
+            const speed = T.MathUtils.clamp(
+              target.velocity.length() +
+                T.MathUtils.clamp((range - 600) * 0.035, -8, 38),
+              100,
+              190,
+            );
+            controls.throttleTarget = T.MathUtils.clamp(
+              (0.00125 * speed * speed - 9) / 33,
+              0.18,
+              0.9,
+            );
+          }
+        }
+      } else if (this.mouseSteering && this.mouseAim.length() > 0.08) {
+        // A bounded camera ray makes the aircraft steer toward the visible cursor.
+        this.steeringDirection
+          .set(
+            this.mouseAim.x * this.settings.sensitivity,
+            this.mouseAim.y *
+              (this.settings.invert ? -1 : 1) *
+              this.settings.sensitivity,
+            0.5,
+          )
+          .unproject(this.camera)
+          .sub(this.camera.position)
+          .normalize();
+        controls.aimDirection = this.steeringDirection;
+      }
+    }
+    return controls;
+  }
+  private toggleTargetFollow() {
+    if (!this.combat.active || this.settings.controlMode !== "assisted") return;
+    this.targetFollow = !this.targetFollow;
+    this.mouseSteering = false;
+    this.toast(
+      this.targetFollow
+        ? "Following the selected target. Fire when ready; WASD returns manual control."
+        : "Manual steering. A/D turns; release the keys to level out.",
+      "FLIGHT ASSIST",
     );
   }
   private frame(timestamp: number) {
@@ -485,7 +625,7 @@ class Game {
           1 / 60,
           this.flight,
           {
-            gun: this.inputActions.active("gun"),
+            gun: this.inputActions.active("gun") || this.mouseGun,
             missile: this.inputActions.active("missile"),
             target: this.inputActions.active("target"),
             flare: this.inputActions.active("flare"),
@@ -862,6 +1002,7 @@ class Game {
     const active = !!this.combat.active && this.state !== "menu";
     el("combat-panel").hidden = !active;
     el("target-marker").hidden = true;
+    el("lead-marker").hidden = true;
     el("hit-confirm").hidden = this.time >= this.hitUntil || !active;
     if (!active) return;
     const status = this.combat.status;
@@ -891,8 +1032,16 @@ class Game {
       el("combat-ally-health").textContent =
         `${Math.round((this.combat.ally.health / this.combat.ally.maxHealth) * 100)}%`;
     const b = this.inputActions.bindings;
+    el<HTMLButtonElement>("target-follow").disabled =
+      this.settings.controlMode !== "assisted" ||
+      this.combat.completed ||
+      this.combat.failed;
+    el("target-follow").textContent = this.targetFollow
+      ? "G · TARGET FOLLOW ON"
+      : "G · FOLLOW TARGET";
+    el("target-follow").setAttribute("aria-pressed", String(this.targetFollow));
     el("combat-hints").textContent =
-      `${b.gun.slice(3)} gun · ${b.missile.slice(3)} missile · ${b.target.slice(3)} target · ${b.flare.slice(3)} flare${this.inputActions.connected ? " · GAMEPAD" : ""}`;
+      `Left click / ${b.gun.slice(3)} gun · right click / ${b.missile.slice(3)} missile · ${b.target.slice(3)} target · ${b.flare.slice(3)} flare${this.inputActions.connected ? " · GAMEPAD" : ""}`;
     if (status.threat && this.state === "flight") {
       el("warning").textContent = "INCOMING MISSILE · EVADE / COUNTERMEASURE";
       if (this.time - this.lastThreatCue > 0.75) {
@@ -936,6 +1085,23 @@ class Game {
         `rotate(${Math.atan2(-this.projected.y, this.projected.x)}rad)`;
     else marker.querySelector<HTMLElement>("span")!.style.transform = "";
     el("target-range").textContent = `${(status.range / 1000).toFixed(1)} KM`;
+    const lead = this.combat.getGunAimPoint(this.flight, this.leadPoint, {
+      blocked: (a, b) => this.combatBlocked(a, b),
+    });
+    if (lead && !offscreen) {
+      this.projected.copy(lead).sub(this.world.origin).project(this.camera);
+      if (
+        this.projected.z > -1 &&
+        this.projected.z < 1 &&
+        Math.abs(this.projected.x) < 0.95 &&
+        Math.abs(this.projected.y) < 0.85
+      ) {
+        const pip = el("lead-marker");
+        pip.hidden = false;
+        pip.style.left = `${(this.projected.x * 0.5 + 0.5) * innerWidth}px`;
+        pip.style.top = `${(-this.projected.y * 0.5 + 0.5) * innerHeight}px`;
+      }
+    }
   }
   private drawMap() {
     const canvas = el<HTMLCanvasElement>("map"),
@@ -1049,6 +1215,10 @@ class Game {
       );
   }
   private syncSettings() {
+    this.flight.controlMode = this.settings.controlMode;
+    el<HTMLSelectElement>("control-mode").value = this.settings.controlMode;
+    el("flight-turn-hint").textContent =
+      this.settings.controlMode === "assisted" ? "TURN" : "BANK";
     for (const action of Object.keys(defaultBindings) as CombatAction[])
       el<HTMLSelectElement>(`bind-${action}`).value =
         this.inputActions.bindings[action];
@@ -1116,6 +1286,8 @@ class Game {
         ? s.quality
         : "medium";
       this.settings.invert = !!s.invert;
+      this.settings.controlMode =
+        s.controlMode === "advanced" ? "advanced" : "assisted";
       this.settings.sensitivity = T.MathUtils.clamp(
         Number(s.sensitivity) || 1,
         0.5,
