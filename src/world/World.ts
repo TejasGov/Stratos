@@ -1,13 +1,6 @@
 import * as T from "three";
 import { CHUNK, hash, heightAt, buildTerrain, regionMasks } from "./terrain";
-import {
-  createOutdoorSky,
-  createOutdoorEnvironment,
-  createOcean,
-  SUN_DIRECTION,
-  WorldQuality,
-} from "../render/OutdoorEnvironment";
-import { CloudLayers } from "../render/CloudLayers";
+import type { WorldQuality } from "../render/OutdoorEnvironment";
 import { RequestLedger, terrainTargets } from "./StreamingScheduler";
 import { TerrainMaterials } from "../render/TerrainMaterials";
 interface TerrainResult {
@@ -54,18 +47,14 @@ export class World {
   });
   private airfield = new T.Group();
   private bridge = new T.Group();
-  private water: T.Mesh;
-  private sky: T.Mesh;
-  private clouds = new CloudLayers();
-  private environment?: T.WebGLRenderTarget;
-  private hemisphere = new T.HemisphereLight("#c6ddf2", "#545544", 0.75);
-  private sun = new T.DirectionalLight("#fff1d9", 2.5);
+  /** Shadow-casting sun/moon light; the sky engine owns its colour and intensity. */
+  readonly sun = new T.DirectionalLight("#fff1d9", 2.5);
+  /** Direction toward the light, updated by the sky engine's time of day. */
+  readonly lightDirection = new T.Vector3(-0.55, 0.68, 0.48).normalize();
   private matrix = new T.Object3D();
   private worldTime = 0;
   workerError = false;
   constructor(private scene: T.Scene) {
-    scene.fog = new T.FogExp2("#91b2bf", 0.000075);
-    scene.add(this.hemisphere);
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(1024, 1024);
     this.sun.shadow.camera.left = -900;
@@ -77,11 +66,6 @@ export class World {
     this.sun.shadow.normalBias = 2;
     this.sun.shadow.bias = -0.0002;
     scene.add(this.sun, this.sun.target);
-    this.sky = createOutdoorSky();
-    scene.add(this.sky);
-    this.water = createOcean();
-    this.water.rotation.x = -Math.PI / 2;
-    scene.add(this.water, this.clouds.mesh);
     this.createAirfield();
     this.createBridge();
     this.bindWorker();
@@ -302,23 +286,6 @@ export class World {
       this.addChunk(data);
     }
     this.uploadMilliseconds = performance.now() - uploadStart;
-    this.water.position.set(
-      position.x - this.origin.x,
-      0,
-      position.z - this.origin.z,
-    );
-    (this.water.material as T.ShaderMaterial).uniforms.time.value =
-      this.worldTime;
-    (this.water.material as T.ShaderMaterial).uniforms.offset.value.set(
-      this.origin.x,
-      this.origin.z,
-    );
-    this.sky.position.set(
-      position.x - this.origin.x,
-      position.y,
-      position.z - this.origin.z,
-    );
-    this.clouds.update(position, this.origin, this.worldTime);
     this.airfield.position.set(-900 - this.origin.x, 0, -this.origin.z);
     this.bridge.position.set(2500 - this.origin.x, 0, -500 - this.origin.z);
     this.sun.target.position.set(
@@ -334,7 +301,7 @@ export class World {
     );
     this.sun.position
       .copy(this.sun.target.position)
-      .addScaledVector(SUN_DIRECTION, 6500);
+      .addScaledVector(this.lightDirection, 6500);
   }
   private addChunk(data: TerrainResult, fallback = false) {
     if (!this.desired.has(data.key) && !fallback) return;
@@ -433,17 +400,11 @@ export class World {
   get materialError() {
     return this.terrainMaterials.loadError;
   }
-  createEnvironment(renderer: T.WebGLRenderer) {
+  configure(renderer: T.WebGLRenderer) {
     this.terrainMaterials.configure(renderer);
-    const previous = this.environment;
-    this.environment = createOutdoorEnvironment(renderer);
-    this.scene.environment = this.environment.texture;
-    previous?.dispose();
-    return this.environment.texture;
   }
   setQuality(quality: WorldQuality) {
     this.terrainMaterials.setQuality(quality);
-    this.clouds.setQuality(quality);
     this.sun.castShadow = quality !== "low";
     const size = quality === "high" ? 2048 : 1024;
     if (this.sun.shadow.mapSize.x !== size) {
@@ -451,15 +412,9 @@ export class World {
       this.sun.shadow.map = null;
       this.sun.shadow.mapSize.set(size, size);
     }
-    (this.water.material as T.ShaderMaterial).uniforms.detail.value =
-      quality === "low" ? 0 : 1;
   }
   dispose() {
     this.worker.terminate();
-    this.clouds.dispose();
-    if (this.scene.environment === this.environment?.texture)
-      this.scene.environment = null;
-    this.environment?.dispose();
     const sharedMaterials = new Set<T.Material>([
       this.mat,
       this.treeMaterial,
@@ -467,7 +422,7 @@ export class World {
     ]);
     const geometries = new Set<T.BufferGeometry>();
     const materials = new Set<T.Material>();
-    for (const root of [this.airfield, this.bridge, this.water, this.sky]) {
+    for (const root of [this.airfield, this.bridge]) {
       root.traverse((object) => {
         if (object instanceof T.Mesh) {
           geometries.add(object.geometry);
@@ -485,7 +440,6 @@ export class World {
     this.sun.removeFromParent();
     this.sun.target.removeFromParent();
     this.sun.shadow.dispose();
-    this.hemisphere.removeFromParent();
     for (const [key, g] of this.chunks) this.removeChunk(key, g);
     this.terrainMaterials.dispose();
     this.treeGeometry.dispose();

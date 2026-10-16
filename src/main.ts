@@ -16,7 +16,7 @@ import {
 } from "./input/FlightInput";
 import { Effects, type EffectsQuality } from "./effects/Effects";
 import type { CollisionWorld } from "./physics/CollisionWorld";
-import { ParticleDepthPass } from "./render/ParticleDepthPass";
+import { SkyEngine, TRANSPARENT_LAYER } from "./sky/SkyEngine";
 import { CombatSystem, type CombatMission } from "./combat/CombatSystem";
 import { CombatView } from "./combat/CombatView";
 
@@ -41,7 +41,7 @@ createUI();
 class Game {
   renderer: T.WebGLRenderer;
   scene = new T.Scene();
-  camera = new T.PerspectiveCamera(56, innerWidth / innerHeight, 1, 22000);
+  camera = new T.PerspectiveCamera(56, innerWidth / innerHeight, 1, 60000);
   flight = new Flight();
   mission = new Mission();
   audio = new FlightAudio();
@@ -51,7 +51,8 @@ class Game {
   combatView: CombatView;
   physics?: CollisionWorld;
   private physicsReady: Promise<void>;
-  private depthPass = new ParticleDepthPass();
+  sky: SkyEngine;
+  private cameraGlobal = new T.Vector3();
   plane = new T.Group();
   state: State = "menu";
   loaded = false;
@@ -101,6 +102,7 @@ class Game {
   private look = new T.Vector3();
   private projected = new T.Vector3();
   private mapTerrain = document.createElement("canvas");
+  private drawingSize = new T.Vector2();
   private mapCell = "";
   constructor() {
     this.renderer = new T.WebGLRenderer({
@@ -110,16 +112,21 @@ class Game {
     this.renderer.setSize(innerWidth, innerHeight);
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
     this.renderer.outputColorSpace = T.SRGBColorSpace;
-    this.renderer.toneMapping = T.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 0.85;
+    this.renderer.toneMapping = T.NoToneMapping;
     this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.autoUpdate = false;
     this.renderer.shadowMap.type = T.PCFShadowMap;
     el("scene").appendChild(this.renderer.domElement);
     this.world = new World(this.scene);
-    this.world.createEnvironment(this.renderer);
-    this.scene.environmentIntensity = 0.25;
+    this.world.configure(this.renderer);
+    this.sky = new SkyEngine(this.renderer, this.world.sun);
+    this.scene.environmentIntensity = 1;
     this.effects = new Effects(this.scene);
+    this.effects.group.traverse((o) => o.layers.set(TRANSPARENT_LAYER));
     this.combatView = new CombatView(this.scene);
+    this.combatView.group.traverse((o) => {
+      if (o instanceof T.LineSegments) o.layers.set(TRANSPARENT_LAYER);
+    });
     this.physicsReady = import("./physics/CollisionWorld")
       .then(({ CollisionWorld }) => CollisionWorld.create(renderedHeightAt))
       .then((physics) => {
@@ -722,6 +729,8 @@ class Game {
           this.save();
         }
     }
+    this.sky.update(this.state === "flight" || this.state === "menu" ? dt : 0);
+    this.world.lightDirection.copy(this.sky.lightDirection);
     const oldOrigin = this.world.origin.clone();
     this.world.update(
       this.flight.position,
@@ -766,20 +775,15 @@ class Game {
       this.mapTime = 0;
       this.drawMap();
     }
-    if (this.settings.quality === "high" && this.effects.stats.rendered > 0) {
-      const depth = this.depthPass.render(
-        this.renderer,
-        this.scene,
-        this.camera,
-      );
-      this.effects.setSoftDepth(
-        depth.texture,
-        this.camera,
-        depth.width,
-        depth.height,
-      );
-    } else this.effects.setSoftDepth(null, this.camera, 1, 1);
-    this.renderer.render(this.scene, this.camera);
+    const drawing = this.renderer.getDrawingBufferSize(this.drawingSize);
+    this.effects.setSoftDepth(
+      this.sky.depthTexture,
+      this.camera,
+      drawing.x,
+      drawing.y,
+    );
+    this.cameraGlobal.copy(this.camera.position).add(this.world.origin);
+    this.sky.render(this.scene, this.camera, this.cameraGlobal, dt);
     if (!el("debug").hidden)
       el("debug").textContent =
         `${this.fps.toFixed(0)} FPS\nFRAME median ${this.telemetry.median.toFixed(1)} / p95 ${this.telemetry.p95.toFixed(1)} ms\n${this.renderer.info.render.calls} draw calls\n${this.renderer.info.render.triangles.toLocaleString()} triangles\n${this.world.chunks.size} terrain chunks / ${this.world.stats.pending} pending\nINSTALL ${this.world.stats.uploadMilliseconds.toFixed(2)} ms / ${(this.world.stats.queuedBytes / 1024).toFixed(0)} KiB queued\n${this.effects.stats.smoke} smoke / ${this.effects.stats.flame} flame\n${this.physics?.status.colliders ?? 0} Rapier colliders\n${this.renderer.info.memory.geometries} geometries / ${this.renderer.info.memory.textures} textures\nORIGIN ${this.world.origin.x}, ${this.world.origin.z}`;
@@ -901,6 +905,7 @@ class Game {
         }),
       );
       ring.userData.global = gate;
+      ring.layers.set(TRANSPARENT_LAYER);
       const next = this.mission.gate(Math.min(i + 1, route.points.length - 1));
       if (next && !next.equals(gate)) ring.lookAt(next.clone().sub(gate));
       this.rings.push(ring);
@@ -1242,6 +1247,7 @@ class Game {
   private applyQuality() {
     this.world.setQuality(this.settings.quality as EffectsQuality);
     this.effects.setQuality(this.settings.quality as EffectsQuality);
+    this.sky.setQuality(this.settings.quality as EffectsQuality);
     const ratio =
       this.settings.quality === "low"
         ? 1
@@ -1341,7 +1347,8 @@ class Game {
   }
 }
 try {
-  new Game();
+  // Exposed for automated visual checks and console exploration.
+  (window as unknown as { stratos: Game }).stratos = new Game();
 } catch (error) {
   el("fatal").hidden = false;
   el("fatal-message").textContent =
