@@ -9,7 +9,7 @@ import { Flight, neutral, overRunway, runwayAt } from "./flight";
 import { HAVEN } from "./world/bases";
 import { Mission, landmarks, routes, type RouteId } from "./missions";
 import { FlightAudio } from "./audio";
-import { Comms } from "./comms";
+import { Comms, type Line } from "./comms";
 import { createUI, el } from "./ui";
 import { Hud } from "./ui/Hud";
 import { FrameTelemetry } from "./render/FrameTelemetry";
@@ -129,6 +129,8 @@ class Game {
   /** What Haven Control has already called this flight. */
   private radio = { milestone: 0, kills: 0, damaged: false, threat: false, terrainCue: 0 };
   private lastLock = false;
+  /** Radio call held until wheels-up: the brief only makes sense once airborne. */
+  private liftoffCall: Line | null = null;
   private hitUntil = 0;
   private shakeAmount = 0;
   private missileEmitters = new Set<string>();
@@ -188,7 +190,7 @@ class Game {
     });
     this.combatView.loadDefenseModels(this.gltf).catch(() => {});
     // Strike damage shows on the world's buildings; combat never imports world code.
-    this.combat.onTargetDestroyed = (id) => this.airbase()?.destroy(id);
+    this.combat.onTargetDestroyed = (id) => this.world.airbase.destroy(id);
     this.physicsReady = import("./physics/CollisionWorld")
       .then(({ CollisionWorld }) => CollisionWorld.create(heightAt))
       .then((physics) => {
@@ -343,7 +345,9 @@ class Game {
     const token = ++this.adversaryToken;
     try {
       const models = await Promise.all(ids.map((id) => this.loadModel(airframe(id))));
-      if (token === this.adversaryToken) this.combatView.setEnemyTemplates(models);
+      if (token !== this.adversaryToken) return;
+      this.combatView.setEnemyTemplates(models);
+      this.world.airbase.setParkedAircraft(models);
     } catch {
       // Enemies fall back to the player's model.
     }
@@ -694,7 +698,7 @@ class Game {
     this.mission.stop();
     this.combat.stop();
     this.combatView.clear();
-    this.airbase()?.reset();
+    this.world.airbase.reset();
     this.effects.clear();
     this.telemetry.reset();
     this.missileEmitters.clear();
@@ -720,7 +724,7 @@ class Game {
         this.syncSettings();
       });
     this.resetRadio();
-    this.comms.say(combatMission ?? (route ? "routeStart" : "takeoff"), 1.5);
+    this.liftoffCall = combatMission ?? (route ? "routeStart" : "takeoff");
     this.buildRings();
     this.updateObjective();
     this.toast(
@@ -1114,6 +1118,10 @@ class Game {
       while (this.accumulator >= 1 / 60 && steps++ < 6) {
         this.physics?.update(this.flight.position, this.world.origin, 1 / 60);
         this.flight.step(1 / 60, this.input());
+        if (this.liftoffCall && !this.flight.onGround) {
+          this.comms.say(this.liftoffCall, 1.5);
+          this.liftoffCall = null;
+        }
         // Wheels on (or just above) a runway: Flight judges contact with the pavement.
         if (
           !this.flight.onGround &&
@@ -1536,11 +1544,6 @@ class Game {
         );
       }
     }
-  }
-  /** Blackridge buildings, when the world provides them. */
-  private airbase() {
-    return (this.world as { airbase?: { destroy(id: string): void; reset(): void } })
-      .airbase;
   }
   private combatBlocked(from: T.Vector3, to: T.Vector3) {
     if (this.physics?.sweep(from, to, undefined, 0.5)) return true;
