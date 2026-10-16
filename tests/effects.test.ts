@@ -87,7 +87,7 @@ test("effects upload rebase and reset work without a WebGL context", () => {
   // GPU attributes are origin-relative Float32, with a submillimeter rounding allowance.
   assert.ok(Math.abs(centers.getX(0) - (before - 3200)) < 0.001);
   assert.equal(effects.stats.smoke, count);
-  effects.updateJet(impact, new Quaternion(), true, 1 / 60);
+  effects.emitDamageSmoke("jet", impact, 1 / 60);
   effects.reset();
   assert.deepEqual(effects.stats, { smoke: 0, flame: 0, rendered: 0 });
   effects.dispose();

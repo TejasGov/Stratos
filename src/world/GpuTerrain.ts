@@ -367,6 +367,8 @@ export const TERRAIN_DISPLACE_GLSL = /* glsl */ `
   vec2 frac = fract(gridPos * 0.5) * 2.0;
   local -= frac * spacing * morphK;
   vec4 s = terrainSample(lod, local);
+  // Geomorph heights toward the next (prefiltered) level so neighbours meet exactly.
+  if (morphK > 0.0 && lod < ${TERRAIN_LEVELS - 1}) s = mix(s, terrainSample(lod + 1, local), morphK);
   float h = s.r;
   if (position.y < -0.5) h -= spacing * 2.5 + 6.0;
   vec2 rel = local - uTerrainCamera.xz;

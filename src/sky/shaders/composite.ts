@@ -217,10 +217,10 @@ vec3 oceanShade(vec3 rd, float tOcean, vec3 sceneColor, float sceneDist, float r
     Lw = sceneColor * Td * Tu * 1.1 + deep * (1.0 - Tu);
     // Shore foam: contact foam plus bands of surf rolling toward the beach.
     float foamNoise = valueNoise(xz * 0.18 + uTime * 0.15) * 0.65 + valueNoise(xz * 0.9 - uTime * 0.1) * 0.35;
-    float shore = 1.0 - smoothstep(0.0, 1.2, depth);
-    float bands = smoothstep(0.72, 1.0, 0.5 + 0.5 * sin(6.2831 * (depth / 2.6 - uTime * 0.12) + 2.5 * foamNoise)) *
-      (1.0 - smoothstep(0.4, 4.5, depth));
-    float foam = clamp(shore * 0.9 + bands, 0.0, 1.0) * smoothstep(0.25, 0.65, foamNoise);
+    float shore = 1.0 - smoothstep(0.0, 0.7, depth);
+    float bands = smoothstep(0.75, 1.0, 0.5 + 0.5 * sin(6.2831 * (depth / 1.4 - uTime * 0.15) + 2.5 * foamNoise)) *
+      (1.0 - smoothstep(0.3, 2.2, depth)) * 0.65;
+    float foam = clamp(shore * 0.85 + bands, 0.0, 1.0) * smoothstep(0.3, 0.7, foamNoise) * 0.8;
     Lw = mix(Lw, 0.8 * irradiance / PI, foam);
     F *= 1.0 - foam;
     spec *= 1.0 - foam;
@@ -308,9 +308,11 @@ void main() {
     vec2 dinfo = texelFetch(tCloudDepth, p, 0).xy;
     float bil = (i == 0 ? 1.0 - f.x : f.x) * (j == 0 ? 1.0 - f.y : f.y);
     float lim = dinfo.y * 1000.0;
-    // Soft depth similarity: a hard 1/x weight degenerates into blocky nearest-texel picks.
-    float rel = abs(min(refDist, 1.6e5) - min(lim, 1.6e5)) / max(min(refDist, 1.6e5), 1.0);
-    float similarity = exp(-rel * 6.0);
+    // Depth similarity only matters where geometry cuts the cloud: clamping both
+    // distances by the cloud's own depth ignores backgrounds hidden behind it.
+    float cloudAt = c.a < 0.98 ? dinfo.x * 1000.0 * 1.15 : 1.6e5;
+    float a = min(min(refDist, 1.6e5), cloudAt), b = min(min(lim, 1.6e5), cloudAt);
+    float similarity = exp(-abs(a - b) / max(a, 1.0) * 6.0);
     float w = bil * similarity + 1e-5;
     cloud += c * w;
     cloudDepth += dinfo.x * 1000.0 * w;

@@ -10,6 +10,16 @@ export interface Controls {
   aimDirection?: Vector3;
   throttleTarget?: number;
 }
+/** International Standard Atmosphere helpers (altitude in metres). */
+export function airDensityRatio(altitude: number) {
+  return Math.exp(-Math.max(0, altitude) / 8500);
+}
+export function speedOfSound(altitude: number) {
+  const h = Math.max(0, altitude);
+  const temperature =
+    h <= 11000 ? 288.15 - 0.0065 * h : h <= 20000 ? 216.65 : 216.65 + 0.001 * (h - 20000);
+  return 20.047 * Math.sqrt(temperature);
+}
 export const neutral: Controls = {
   pitch: 0,
   roll: 0,
@@ -33,7 +43,13 @@ export class Flight {
   elapsed = 0;
   crashed = false;
   boost = false;
+  /** Mach number, ambient density ratio and smoothed load factor (G) for HUD and effects. */
+  mach = 0.46;
+  density = 1;
+  gLoad = 1;
   private forward = new Vector3();
+  private lastVelocity = new Vector3();
+  private acceleration = new Vector3();
   private target = new Vector3();
   private angles = new Euler(0, 0, 0, "YXZ");
   private angularVelocity = new Vector3();
@@ -58,6 +74,13 @@ export class Flight {
     this.velocity.set(0, 0, -155);
     this.crashed = false;
     this.boost = false;
+    this.gLoad = 1;
+    this.lastVelocity.copy(this.velocity);
+    this.updateAtmosphere();
+  }
+  private updateAtmosphere() {
+    this.density = airDensityRatio(this.position.y);
+    this.mach = this.speed / speedOfSound(this.position.y);
   }
   step(dt: number, control: Controls) {
     if (this.crashed || !(dt > 0) || !Number.isFinite(dt)) return;
@@ -84,7 +107,10 @@ export class Flight {
     this.right.set(1, 0, 0).applyQuaternion(this.quaternion);
     this.up.set(0, 1, 0).applyQuaternion(this.quaternion);
     const bank = Math.atan2(this.right.y, this.up.y);
-    const authority = MathUtils.clamp(this.speed / 160, 0.45, 1.2);
+    const equivalentSpeed = this.speed * Math.sqrt(this.density);
+    // Arcade authority follows true airspeed; only the thin stratosphere softens it.
+    const thinAir = 1 - 0.5 * MathUtils.smoothstep(this.position.y, 15000, 30000);
+    const authority = MathUtils.clamp(this.speed / 160, 0.45, 1.2) * thinAir;
     if (this.controlMode === "assisted") {
       this.angles.setFromQuaternion(this.quaternion, "YXZ");
       let desiredPitch = control.pitch
@@ -182,19 +208,34 @@ export class Flight {
     this.pitch = this.angles.x;
     this.yaw = this.angles.y;
     this.roll = this.angles.z;
-    const thrust = 9 + this.throttle * 33 + (this.boost ? 27 : 0);
-    const drag = 0.00125 * this.speed ** 2;
+    // Thrust lapses with altitude more slowly than density falls, so the jet
+    // goes faster up high: Mach ~0.95 level at sea level (dive to go supersonic), ~1.15 at 6 km, ~1.8 at 20 km.
+    const lapse = this.density ** 0.7;
+    const thrust = (9 + this.throttle * 33 + (this.boost ? 130 : 0)) * lapse;
+    // Transonic wave-drag rise, peaking just past Mach 1.
+    const wave = 1 + 0.35 * Math.exp(-(((this.mach - 1.02) / 0.15) ** 2));
+    const drag = 0.00125 * this.density * this.speed ** 2 * wave;
     this.speed = MathUtils.clamp(
       this.speed +
         (thrust - drag - this.forward.y * 12 - Math.abs(control.pitch) * 2) *
           dt,
       45,
-      340,
+      720,
     );
     this.target.copy(this.forward).multiplyScalar(this.speed);
-    this.target.y -= Math.max(0, 95 - this.speed) * 0.7;
+    this.target.y -= Math.max(0, 95 - equivalentSpeed) * 0.7;
     this.velocity.lerp(this.target, 1 - Math.exp(-3 * dt));
     this.position.addScaledVector(this.velocity, dt);
+    // Load factor: acceleration plus gravity, projected on the aircraft's up axis.
+    this.acceleration
+      .copy(this.velocity)
+      .sub(this.lastVelocity)
+      .multiplyScalar(1 / dt);
+    this.lastVelocity.copy(this.velocity);
+    this.up.set(0, 1, 0).applyQuaternion(this.quaternion);
+    const g = (this.acceleration.dot(this.up) + 9.81 * this.up.y) / 9.81;
+    this.gLoad = MathUtils.damp(this.gLoad, MathUtils.clamp(g, -4, 11), 6, dt);
+    this.updateAtmosphere();
     this.elapsed += dt;
     this.distance += this.velocity.length() * dt;
     this.crashed = sweptCollision(this.previous, this.position);
