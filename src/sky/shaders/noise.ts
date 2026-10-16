@@ -80,18 +80,20 @@ void main() {
 }`;
 
 /**
- * 512² tileable weather fields. R: large weather systems, G: cumulus cells,
- * B: storm cores, A: fine coverage break-up.
+ * 512² tileable weather fields, contrast-stretched to roughly 0..1.
+ * Sampled twice at different scales: R systems and B storm cores over 96 km,
+ * G cumulus cells and A fine break-up over 34 km.
  */
 export const WEATHER_NOISE = /* glsl */ `
 ${NOISE_GLSL}
 layout(location = 0) out vec4 outColor;
 void main() {
   vec3 p = vec3(gl_FragCoord.xy / 512.0, 0.37);
-  float systems = perlinFbm(p, 3.0, 4) * 0.5 + 0.5;
-  float cells = worley(p * 22.0, 22.0) * 0.65 + worley(p * 44.0, 44.0) * 0.35;
-  cells = mix(cells, perlinFbm(p + 3.1, 18.0, 3) * 0.5 + 0.5, 0.25);
-  float storm = smoothstep(0.58, 0.8, perlinFbm(p + 9.7, 2.0, 3) * 0.5 + 0.5);
-  float fine = perlinFbm(p + 5.3, 32.0, 3) * 0.5 + 0.5;
+  float systems = clamp(perlinFbm(p, 3.0, 4) * 2.6 + 0.5, 0.0, 1.0);
+  float cells = worley(p * 10.0, 10.0) * 0.55 + worley(p * 20.0, 20.0) * 0.3 +
+    (perlinFbm(p + 3.1, 8.0, 3) * 0.5 + 0.5) * 0.35;
+  cells = clamp((cells - 0.367) * 2.29, 0.0, 1.0);
+  float storm = clamp(perlinFbm(p + 9.7, 2.0, 3) * 1.5 + 0.5, 0.0, 1.0);
+  float fine = clamp(perlinFbm(p + 5.3, 24.0, 2) * 1.8 + 0.5, 0.0, 1.0);
   outColor = vec4(systems, cells, storm, fine);
 }`;

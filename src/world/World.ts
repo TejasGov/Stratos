@@ -1,6 +1,6 @@
 import * as T from "three";
 import { CHUNK, hash, heightAt, buildTerrain, regionMasks } from "./terrain";
-import type { WorldQuality } from "../render/OutdoorEnvironment";
+import type { WorldQuality } from "../render/quality";
 import { RequestLedger, terrainTargets } from "./StreamingScheduler";
 import { TerrainMaterials } from "../render/TerrainMaterials";
 interface TerrainResult {

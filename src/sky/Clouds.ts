@@ -5,11 +5,19 @@ import { CLOUD_MARCH, CLOUD_RESOLVE, CLOUD_SHADOW } from "./shaders/clouds";
 import type { Atmosphere } from "./Atmosphere";
 
 export type CloudQuality = "low" | "medium" | "high";
+/** Resolve-target scale (relative to the drawing buffer) and march budget. */
 const SETTINGS = {
-  low: { scale: 0.25, steps: 56 },
-  medium: { scale: 1 / 3, steps: 80 },
-  high: { scale: 0.5, steps: 110 },
+  low: { scale: 0.3, steps: 72 },
+  medium: { scale: 0.4, steps: 100 },
+  high: { scale: 0.5, steps: 140 },
 } as const;
+/** 2×2 trace order: every resolve pixel is refreshed once per four frames. */
+const BAYER = [
+  [0, 0],
+  [1, 1],
+  [1, 0],
+  [0, 1],
+] as const;
 
 export interface WeatherState {
   coverage: number;
@@ -70,8 +78,8 @@ export class Clouds {
   private rayMatrix = new T.Matrix4();
   private viewRotation = new T.Matrix4();
   readonly shadowCenter = new T.Vector2();
-  readonly shadowExtent = 26000;
-  readonly weatherState: WeatherState = { coverage: 0.52, storm: 0.35, density: 1 };
+  readonly shadowExtent = 40000;
+  readonly weatherState: WeatherState = { coverage: 0.6, storm: 0.35, density: 1 };
   readonly windOffset = new T.Vector2();
   readonly shapeOffset = new T.Vector3();
   readonly lightning = { intensity: 0, position: new T.Vector3() };
@@ -101,10 +109,9 @@ export class Clouds {
           tDepth: { value: depth },
           uRayMatrix: { value: this.rayMatrix },
           uProjectionInverse: { value: new T.Matrix4() },
-          uResolution: { value: new T.Vector2(1, 1) },
-          uClip: { value: new T.Vector2(1, 1) },
+          uResolveSize: { value: new T.Vector2(1, 1) },
+          uOffset: { value: new T.Vector2() },
           uSunIlluminance: { value: 1 },
-          uSunScale: { value: 1 },
           uFrame: { value: 0 },
           uMaxSteps: { value: 80 },
           uMaxDistance: { value: 160000 },
@@ -125,6 +132,7 @@ export class Clouds {
           uPreviousViewProjection: { value: this.previousViewProjection },
           uCameraDelta: { value: new T.Vector3() },
           uResolution: { value: new T.Vector2(1, 1) },
+          uOffset: { value: new T.Vector2() },
           uReset: { value: 1 },
         },
       }),
@@ -161,7 +169,7 @@ export class Clouds {
     if (w === this.width && h === this.height) return;
     this.width = w;
     this.height = h;
-    this.march.setSize(w, h);
+    this.march.setSize(Math.ceil(w / 2), Math.ceil(h / 2));
     for (const target of this.history) target.setSize(w, h);
     this.reset = true;
   }
@@ -219,10 +227,11 @@ export class Clouds {
 
     this.rotation.extractRotation(camera.matrixWorld);
     this.rayMatrix.copy(this.rotation).multiply(camera.projectionMatrixInverse);
+    const [ox, oy] = BAYER[this.frame % 4];
     const march = this.marchPass.material.uniforms;
     march.uProjectionInverse.value.copy(camera.projectionMatrixInverse);
-    march.uResolution.value.set(this.width, this.height);
-    march.uClip.value.set(camera.near, camera.far);
+    march.uResolveSize.value.set(this.width, this.height);
+    march.uOffset.value.set(ox, oy);
     march.uSunIlluminance.value = sunIlluminance;
     march.uFrame.value = this.frame;
     march.uMaxSteps.value = SETTINGS[this.quality].steps;
@@ -235,6 +244,7 @@ export class Clouds {
     resolve.tHistory.value = read.textures[0];
     resolve.tHistoryDepth.value = read.textures[1];
     resolve.uResolution.value.set(this.width, this.height);
+    resolve.uOffset.value.set(ox, oy);
     resolve.uCameraDelta.value.copy(cameraGlobal).sub(this.previousCamera);
     resolve.uReset.value = this.reset ? 1 : 0;
     this.resolvePass.render(renderer, write);
@@ -248,6 +258,42 @@ export class Clouds {
       .multiply(this.viewRotation);
     this.previousCamera.copy(cameraGlobal);
     renderer.setRenderTarget(previousTarget);
+  }
+  /** Diagnostic read-back of the generated volumes and the resolved layer (development only). */
+  /** Weather map read-back as base64 RGBA bytes (development only). */
+  readWeather(renderer: T.WebGLRenderer) {
+    const out = new Uint8Array(512 * 512 * 4);
+    renderer.readRenderTargetPixels(this.weather, 0, 0, 512, 512, out);
+    let binary = "";
+    for (let i = 0; i < out.length; i += 8192)
+      binary += String.fromCharCode(...out.subarray(i, i + 8192));
+    return btoa(binary);
+  }
+  probe(renderer: T.WebGLRenderer) {
+    const target = new T.WebGLRenderTarget(4, 1, { type: T.FloatType, depthBuffer: false });
+    const pass = new FullscreenPass(
+      passMaterial({
+        fragmentShader: `uniform highp sampler3D tShape; uniform highp sampler3D tDetail; uniform sampler2D tWeather; uniform sampler2D tCloud;
+        layout(location = 0) out vec4 o;
+        void main(){ int x = int(gl_FragCoord.x);
+          if (x == 0) o = texture(tShape, vec3(0.3, 0.6, 0.2));
+          else if (x == 1) o = texture(tDetail, vec3(0.3, 0.6, 0.2));
+          else if (x == 2) o = texture(tWeather, vec2(0.3, 0.6));
+          else o = texture(tCloud, vec2(0.5, 0.75)); }`,
+        uniforms: {
+          tShape: { value: this.shape.texture },
+          tDetail: { value: this.detail.texture },
+          tWeather: { value: this.weather.texture },
+          tCloud: { value: this.textures[0] },
+        },
+      }),
+    );
+    pass.render(renderer, target);
+    const out = new Float32Array(16);
+    renderer.readRenderTargetPixels(target, 0, 0, 4, 1, out);
+    target.dispose();
+    pass.dispose();
+    return Array.from(out).map((v) => +v.toFixed(3));
   }
   dispose() {
     for (const target of [

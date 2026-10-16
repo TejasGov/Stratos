@@ -795,7 +795,18 @@ class Game {
       );
     } else if (!this.world.stats.workerFallback) this.workerNotice = false;
   }
+  /** Optional fixed camera in global coordinates, for screenshots and photo framing. */
+  debugCamera?: { position: T.Vector3; target: T.Vector3; fov?: number };
   private updateCamera(dt: number) {
+    if (this.debugCamera) {
+      this.camera.position.copy(this.debugCamera.position).sub(this.world.origin);
+      this.camera.up.set(0, 1, 0);
+      this.look.copy(this.debugCamera.target).sub(this.world.origin);
+      this.camera.lookAt(this.look);
+      this.camera.fov = this.debugCamera.fov ?? 56;
+      this.camera.updateProjectionMatrix();
+      return;
+    }
     if (this.state === "menu") {
       this.offset
         .set(-31 + Math.sin(this.time * 0.07) * 7, 15, 39)

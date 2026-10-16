@@ -53,23 +53,25 @@ void main() {
   outColor = vec4(texture(tBase, vUv).rgb + s / 16.0, 1.0);
 }`;
 
-/** Sky-only bright mask for crepuscular rays; clouds and terrain occlude it. */
+/** Analytic occlusion mask for crepuscular rays: open sky near the sun, attenuated by clouds. */
 export const RAY_MASK = /* glsl */ `
-uniform sampler2D tInput;
+uniform sampler2D tClouds;
 uniform sampler2D tDepth;
+uniform mat4 uRayMatrix;
+uniform float uHorizon;
 uniform vec2 uSun;
 uniform float uAspect;
 in vec2 vUv;
 layout(location = 0) out vec4 outColor;
 void main() {
-  float depth = texture(tDepth, vUv).x;
-  vec3 c = texture(tInput, vUv).rgb;
-  float sky = step(0.99999, depth);
+  float sky = step(0.99999, texture(tDepth, vUv).x);
+  vec4 ray = uRayMatrix * vec4(vUv * 2.0 - 1.0, 1.0, 1.0);
+  vec3 rd = normalize(ray.xyz / ray.w);
+  sky *= smoothstep(uHorizon - 0.002, uHorizon + 0.004, rd.y);
+  float open = texture(tClouds, vUv).a;
   vec2 d = (vUv - uSun) * vec2(uAspect, 1.0);
-  float near = exp(-dot(d, d) * 9.0);
-  float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
-  vec3 bright = c * smoothstep(0.0, 1.0, l * 0.02) / (1.0 + l * 0.004);
-  outColor = vec4(bright * sky * near, 1.0);
+  float near = exp(-dot(d, d) * 5.0);
+  outColor = vec4(vec3(sky * open * near), 1.0);
 }`;
 
 export const RAY_BLUR = /* glsl */ `
@@ -140,6 +142,7 @@ uniform float uFlash;
 uniform float uShock;
 uniform vec2 uShockCenter;
 uniform float uVignette;
+uniform float uTonemapper;
 in vec2 vUv;
 layout(location = 0) out vec4 outColor;
 
@@ -167,10 +170,19 @@ vec3 agx(vec3 c) {
   c = agxContrast(c);
   // Look: a little extra punch and saturation for cinematic skies.
   float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
-  c = pow(max(c, 0.0), vec3(1.12));
-  c = l + (c - l) * 1.18;
+  c = pow(max(c, 0.0), vec3(1.22));
+  c = l + (c - l) * 1.32;
   c = outset * c;
   return clamp(c, 0.0, 1.0);
+}
+// ACES fitted (Stephen Hill), with the sRGB→AP1 and ODT matrices.
+vec3 aces(vec3 color) {
+  const mat3 inputMat = mat3(0.59719, 0.07600, 0.02840, 0.35458, 0.90834, 0.13383, 0.04823, 0.01566, 0.83777);
+  const mat3 outputMat = mat3(1.60475, -0.10208, -0.00327, -0.53108, 1.10813, -0.07276, -0.07367, -0.00605, 1.07602);
+  color = inputMat * color;
+  vec3 a = color * (color + 0.0245786) - 0.000090537;
+  vec3 b = color * (0.983729 * color + 0.4329510) + 0.238081;
+  return clamp(outputMat * (a / b), 0.0, 1.0);
 }
 vec3 srgb(vec3 c) {
   return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c));
@@ -240,11 +252,11 @@ void main() {
   color = mix(color, bloom, uBloom);
   color += texture(tRays, uv).rgb * uRays * uSunColor;
   float avg = texture(tExposure, vec2(0.5)).r;
-  float exposure = clamp(0.16 / avg, uMinExposure, uMaxExposure) * exp2(uExposureBias);
+  float exposure = clamp(0.18 / avg, uMinExposure, uMaxExposure) * exp2(uExposureBias);
   color *= exposure;
   color += lensFlare(uv, aspect) * uFlare;
   color += vec3(1.0) * uFlash;
-  vec3 mapped = agx(color);
+  vec3 mapped = uTonemapper > 0.5 ? aces(color * 1.1) : agx(color);
   float vig = 1.0 - uVignette * smoothstep(0.15, 0.85, length(fromCentre * vec2(aspect * 0.75, 1.0)));
   mapped *= vig;
   vec3 outSrgb = srgb(mapped);

@@ -1,5 +1,5 @@
 import * as T from "three";
-import { WorldQuality } from "./OutdoorEnvironment";
+import type { WorldQuality } from "./quality";
 
 const root = `${import.meta.env.BASE_URL}assets/polyhaven/`;
 const sources = [
@@ -104,15 +104,15 @@ export class TerrainMaterials {
         float distant= smoothstep(500.,2800.,length(vViewPosition));
         vec3 ground=terrainGround(grassColor,groundUv,alternateUv,sampleBlend);
         // Broad biome tint restores green groundcover while retaining photographed local detail.
-        ground*=mix(vec3(.63,.92,.52),vec3(.84,1.02,.66),macro);
-        ground=mix(ground,vec3(.085,.135,.06)*(0.8+macro*.4),distant*.42);
+        ground*=mix(vec3(.42,.8,.36),vec3(.6,.92,.48),macro);
+        ground*=1.45;
         vec3 stone=terrainTri(rockColor,vTerrainPoint/50.,terrainN,terrainWeights);
         vec3 beach=terrainGround(sandColor,groundUv,alternateUv,sampleBlend);
         vec3 groundArm=terrainGround(grassArm,groundUv,alternateUv,sampleBlend);
         vec3 stoneArm=terrainTri(rockArm,vTerrainPoint/50.,terrainN,terrainWeights);
         vec3 beachArm=terrainGround(sandArm,groundUv,alternateUv,sampleBlend);
         vec3 terrainArm=mix(mix(groundArm,stoneArm,rockBlend),beachArm,sandBlend);
-        diffuseColor.rgb=mix(mix(ground,stone,rockBlend),beach,sandBlend);
+        diffuseColor.rgb=mix(mix(ground,stone*1.25,rockBlend),beach,sandBlend);
         #ifdef USE_COLOR
           diffuseColor.rgb*=mix(vec3(1.),clamp(vColor.rgb*3.,vec3(.7),vec3(1.3)),.12);
         #endif

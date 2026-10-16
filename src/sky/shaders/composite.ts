@@ -100,7 +100,8 @@ vec3 starField(vec3 rd) {
       float phi = (center.x - 0.5) * 2.0 * PI;
       float y = center.y * 2.0 - 1.0;
       vec3 dir = vec3(cos(phi) * sqrt(1.0 - y * y), y, sin(phi) * sqrt(1.0 - y * y));
-      float ang = acos(clamp(dot(dir, rd), -1.0, 1.0));
+      // Chord length: acos() near 1.0 quantizes to whole-pixel blocks in float32.
+      float ang = length(dir - rd);
       float brightness = pow(h, layer == 0 ? 18.0 : 40.0) * (layer == 0 ? 6.0 : 2.5);
       float spread = uPixelAngle * 0.9;
       float glow = exp(-ang * ang / (spread * spread));
@@ -135,75 +136,97 @@ vec3 moonDisk(vec3 rd) {
   return vec3(1.0, 0.97, 0.92) * (lit * 0.9 + 0.012) * maria * edge * 2.2;
 }
 
+float hash11(float p) {
+  p = fract(p * 0.1031);
+  p *= p + 33.33;
+  p *= p + p;
+  return fract(p);
+}
+float erfcApprox(float x) { return 2.0 * exp(-x * x) / (2.319 * x + sqrt(4.0 + 1.52 * x * x)); }
+float smithLambda(float cosT, float s2) {
+  float v = cosT / sqrt(max((1.0 - cosT * cosT) * 2.0 * s2, 1e-6));
+  return max(0.0, (exp(-v * v) - v * sqrt(PI) * erfcApprox(v)) / (2.0 * v * sqrt(PI)));
+}
+/** Bruneton et al. 2010 sun glitter for an anisotropic Gaussian slope distribution. */
+float glitter(vec3 L, vec3 V, vec3 N, vec3 Tx, vec3 Ty, vec2 s2) {
+  vec3 H = normalize(L + V);
+  float zH = max(dot(H, N), 1e-3);
+  float zx = dot(H, Tx) / zH, zy = dot(H, Ty) / zH;
+  float zL = max(dot(L, N), 0.01), zV = max(dot(V, N), 0.01);
+  float p = exp(-0.5 * (zx * zx / s2.x + zy * zy / s2.y)) / (2.0 * PI * sqrt(s2.x * s2.y));
+  float tV = atan(dot(V, Ty), dot(V, Tx)), cV2 = 1.0 / (1.0 + tV * tV), sV2 = s2.x * cV2 + s2.y * (1.0 - cV2);
+  float tL = atan(dot(L, Ty), dot(L, Tx)), cL2 = 1.0 / (1.0 + tL * tL), sL2 = s2.x * cL2 + s2.y * (1.0 - cL2);
+  float F = 0.02 + 0.98 * pow(1.0 - max(dot(V, H), 0.0), 5.0);
+  return F * p / ((1.0 + smithLambda(zL, sL2) + smithLambda(zV, sV2)) * zV * zH * zH * zH * zH * 4.0);
+}
+float meanFresnel(float cosV, float sigV) {
+  return pow(1.0 - cosV, 5.0 * exp(-2.69 * sigV)) / (1.0 + 22.7 * pow(sigV, 1.5));
+}
+
 vec3 oceanShade(vec3 rd, float tOcean, vec3 sceneColor, float sceneDist, float r, out bool seabed) {
   vec2 xz = uCameraGlobal.xz + rd.xz * tOcean;
-  float footprint = tOcean * uPixelAngle;
-  vec2 slope = vec2(0.0);
-  float lostVariance = 0.0;
-  float wind = 0.35;
-  for (int i = 0; i < 9; i++) {
+  float mu = max(-rd.y, 0.05);
+  float footprint = tOcean * uPixelAngle / mu;
+  float wind = 0.42;
+  vec2 dh = vec2(0.0), sig2 = vec2(0.0);
+  float k = 2.0 * PI / 70.0, A = 0.55;
+  for (int i = 0; i < 18; i++) {
     float fi = float(i);
-    float angle = wind + sin(fi * 2.4) * 1.1;
-    vec2 dir = vec2(cos(angle), sin(angle));
-    float wl = 210.0 * pow(0.6, fi);
-    float k = 2.0 * PI / wl;
-    float amp = wl * 0.009;
-    float omega = sqrt(9.81 * k);
-    float phase = k * dot(dir, xz) - omega * uTime + fi * 1.7;
-    float fade = smoothstep(2.0, 6.0, wl / max(footprint, 1e-3));
-    vec2 g = dir * amp * k * cos(phase);
-    slope += g * fade;
-    lostVariance += (1.0 - fade) * 0.5 * (amp * k) * (amp * k);
+    float ang = wind + 2.4 * (hash11(fi * 3.17 + 0.5) - 0.5);
+    vec2 d = vec2(cos(ang), sin(ang));
+    float ph = k * dot(d, xz) - sqrt(9.81 * k) * uTime + 6.2831 * hash11(fi + 7.1);
+    float fp = footprint * k / PI;
+    float w = (1.0 - smoothstep(0.5, 1.0, fp)) * uOceanDetail;
+    dh += w * A * k * cos(ph) * d;
+    vec2 s = A * k * vec2(cos(ang - wind), sin(ang - wind));
+    sig2 += (1.0 - w * w) * 0.5 * s * s;
+    k *= 1.21;
+    A *= 0.72 + 0.12 * hash11(fi + 3.3);
   }
-  float near = (1.0 - smoothstep(60.0, 900.0, tOcean)) * uOceanDetail;
-  if (near > 0.0) {
-    slope += noiseGrad(xz * 0.35 + uTime * vec2(0.25, 0.1)) * 0.035 * near;
-    slope += noiseGrad(xz * 1.3 - uTime * vec2(0.1, 0.35)) * 0.018 * near;
-  }
-  lostVariance += (1.0 - near) * 0.0012;
-  vec3 n = normalize(vec3(-slope.x, 1.0, -slope.y));
-  vec3 v = -rd;
-  float nv = max(dot(n, v), 1e-3);
-  float fresnel = 0.02 + 0.98 * pow(1.0 - nv, 5.0);
-  vec3 rr = reflect(rd, n);
-  rr.y = abs(rr.y) + 0.002;
-  rr = normalize(rr);
-  vec3 sky = texture(tSkyView, skyViewUv(rr, uSunDir, r)).rgb * uSunIlluminance;
-  vec3 sunT = transmittanceLut(tTransmittance, r, uSunDir.y) * smoothstep(-0.02, 0.02, uSunDir.y);
-  vec3 sun = sunT * uSunIlluminance;
-  // GGX sun glitter with roughness widened by the slope variance lost to filtering.
-  float alpha2 = clamp(0.0045 + lostVariance * 2.0, 0.0045, 0.4);
-  vec3 h = normalize(v + uSunDir);
-  float nh = max(dot(n, h), 0.0);
-  float nl = max(dot(n, uSunDir), 0.0);
-  float dd = nh * nh * (alpha2 - 1.0) + 1.0;
-  float D = alpha2 / (PI * dd * dd);
-  float k2 = sqrt(alpha2) * 0.5;
-  float G = nl / (nl * (1.0 - k2) + k2) * nv / (nv * (1.0 - k2) + k2);
-  float Fs = 0.02 + 0.98 * pow(1.0 - max(dot(h, v), 0.0), 5.0);
-  vec3 spec = sun * min(D * G * Fs / (4.0 * nv * max(nl, 1e-3)) * nl, 600.0);
-  vec3 skyIrr = texture(tSkyView, vec2(0.5, 1.0)).rgb * uSunIlluminance * PI;
-  vec3 irr = sun * max(uSunDir.y, 0.0) + skyIrr;
-  vec3 deep = vec3(0.012, 0.05, 0.085) / PI * irr;
-  // Thin wave crests pick up light scattered through the water (subsurface tint).
-  deep += vec3(0.02, 0.12, 0.11) / PI * sun * pow(max(dot(rd, uSunDir) * 0.5 + 0.5, 0.0), 3.0) *
-    clamp(slope.x * 3.0 + 0.3, 0.0, 1.0) * 0.6;
-  vec3 body = deep;
+  // Unresolved capillary roughness (Cox-Munk, ~7 m/s wind) on top of filtered waves.
+  sig2 += vec2(0.0045, 0.0032);
+  vec3 N = normalize(vec3(-dh.x, 1.0, -dh.y));
+  vec3 V = -rd;
+  vec3 L = uSunDir;
+  vec3 Tx = vec3(cos(wind), 0.0, sin(wind));
+  vec3 Ty = vec3(-Tx.z, 0.0, Tx.x);
+  vec3 sunT = transmittanceLut(tTransmittance, Rg + 0.001, max(L.y, 0.0)) * smoothstep(-0.01, 0.02, L.y);
+  vec3 sunE = sunT * uSunIlluminance;
+  vec3 skyE = texture(tSkyView, vec2(0.5, 1.0)).rgb * uSunIlluminance * PI * 1.25;
+  vec3 irradiance = sunE * max(L.y, 0.0) + skyE;
+  float nv = max(dot(N, V), 1e-3);
+  vec3 Vw = vec3(dot(V, Tx), dot(V, Ty), dot(V, N));
+  vec2 tv = Vw.xy * Vw.xy / max(1.0 - Vw.z * Vw.z, 1e-4);
+  float F = 0.02 + 0.98 * meanFresnel(Vw.z, sqrt(dot(tv, sig2)));
+  vec3 R = reflect(rd, N);
+  R.y = abs(R.y) + 0.001;
+  vec3 sky = texture(tSkyView, skyViewUv(normalize(R), uSunDir, r)).rgb * uSunIlluminance;
+  vec3 spec = sunE * min(glitter(L, V, N, Tx, Ty, sig2), 2000.0);
+  vec3 seaColor = vec3(10.0, 40.0, 120.0) / 255.0 * 0.1;
+  vec3 deep = seaColor * irradiance / PI;
+  vec3 Lw = deep;
   seabed = false;
   if (sceneDist < 1e8 && sceneDist > tOcean) {
-    float path = sceneDist - tOcean;
-    float vertical = max(0.0, -(uCameraGlobal.y + rd.y * sceneDist));
-    vec3 absorb = exp(-vec3(0.42, 0.075, 0.05) * path);
-    float scatter = 1.0 - exp(-0.09 * path);
-    body = sceneColor * absorb + deep * scatter;
-    // Shore foam: breaking bands near the waterline, broken up by noise.
-    float foamNoise = valueNoise(xz * 0.22 + uTime * 0.2) * 0.6 + valueNoise(xz * 0.9) * 0.4;
-    float bands = 0.5 + 0.5 * sin(vertical * 4.5 - uTime * 1.6 + foamNoise * 3.0);
-    float foam = (1.0 - smoothstep(0.0, 2.2, vertical)) * smoothstep(0.35, 0.8, foamNoise * bands + (1.0 - smoothstep(0.0, 0.6, vertical)) * 0.6);
-    body = mix(body, vec3(0.85) / PI * irr, foam * 0.85);
+    float depth = max(0.0, -(uCameraGlobal.y + rd.y * sceneDist));
+    const vec3 SIGMA = vec3(0.45, 0.075, 0.035);
+    float cv = sqrt(max(0.0, 1.0 - (1.0 - nv * nv) / 1.777));
+    float cs = sqrt(max(0.0, 1.0 - (1.0 - L.y * L.y) / 1.777));
+    vec3 Td = exp(-SIGMA * depth / max(cs, 0.15));
+    vec3 Tu = exp(-SIGMA * depth / max(cv, 0.15));
+    // The seabed was lit in air; attenuate the down and up paths through the water.
+    Lw = sceneColor * Td * Tu * 1.1 + deep * (1.0 - Tu);
+    // Shore foam: contact foam plus bands of surf rolling toward the beach.
+    float foamNoise = valueNoise(xz * 0.18 + uTime * 0.15) * 0.65 + valueNoise(xz * 0.9 - uTime * 0.1) * 0.35;
+    float shore = 1.0 - smoothstep(0.0, 1.2, depth);
+    float bands = smoothstep(0.72, 1.0, 0.5 + 0.5 * sin(6.2831 * (depth / 2.6 - uTime * 0.12) + 2.5 * foamNoise)) *
+      (1.0 - smoothstep(0.4, 4.5, depth));
+    float foam = clamp(shore * 0.9 + bands, 0.0, 1.0) * smoothstep(0.25, 0.65, foamNoise);
+    Lw = mix(Lw, 0.8 * irradiance / PI, foam);
+    F *= 1.0 - foam;
+    spec *= 1.0 - foam;
     seabed = true;
   }
-  return mix(body, sky, fresnel) + spec;
+  return spec + F * sky + (1.0 - F) * Lw;
 }
 
 void main() {
@@ -236,7 +259,7 @@ void main() {
     vec3 hit = vec3(uCameraGlobal.x, 0.0, uCameraGlobal.z) + rd * tOcean;
     vec2 suv = (hit.xz - uShadowCenter) / uShadowExtent + 0.5;
     float shade = texture(tCloudShadow, clamp(suv, 0.0, 1.0)).r;
-    float inside = step(abs(suv.x - 0.5), 0.5) * step(abs(suv.y - 0.5), 0.5);
+    float inside = 1.0 - smoothstep(0.38, 0.5, max(abs(suv.x - 0.5), abs(suv.y - 0.5)));
     water *= mix(1.0, 0.35 + 0.65 * shade, inside);
     surfacePerspective(uv, rd, tOcean, true, inscatter, trans);
     color = water * trans + inscatter * uSunIlluminance;
@@ -246,7 +269,7 @@ void main() {
     vec3 world = uCameraGlobal + rd * sceneDist;
     vec2 suv = (world.xz - uSunDir.xz / max(uSunDir.y, 0.06) * world.y - uShadowCenter) / uShadowExtent + 0.5;
     float shade = texture(tCloudShadow, clamp(suv, 0.0, 1.0)).r;
-    float inside = step(abs(suv.x - 0.5), 0.5) * step(abs(suv.y - 0.5), 0.5) * step(world.y, 1300.0);
+    float inside = (1.0 - smoothstep(0.38, 0.5, max(abs(suv.x - 0.5), abs(suv.y - 0.5)))) * step(world.y, 1300.0);
     scene *= mix(1.0, 0.3 + 0.7 * shade, inside);
     surfacePerspective(uv, rd, sceneDist, false, inscatter, trans);
     color = scene * trans + inscatter * uSunIlluminance;
@@ -280,11 +303,11 @@ void main() {
     vec4 c = texelFetch(tClouds, p, 0);
     vec2 dinfo = texelFetch(tCloudDepth, p, 0).xy;
     float bil = (i == 0 ? 1.0 - f.x : f.x) * (j == 0 ? 1.0 - f.y : f.y);
-    float lim = min(dinfo.y, 1e9);
+    float lim = dinfo.y * 1000.0;
     float similarity = 1.0 / (1e-3 + abs(min(refDist, 1.6e5) - min(lim, 1.6e5)) / max(min(refDist, 1.6e5), 1.0));
     float w = bil * similarity + 1e-5;
     cloud += c * w;
-    cloudDepth += dinfo.x * w;
+    cloudDepth += dinfo.x * 1000.0 * w;
     weight += w;
   }
   cloud /= weight;
