@@ -4,10 +4,12 @@ import { Quaternion, Vector3, Group } from "three";
 import { Flight, neutral } from "../src/flight.ts";
 import {
   CombatSystem,
+  PLAYER_ID,
   combatNeutral,
   sweptMovingHit,
   type CombatPlayer,
 } from "../src/combat/CombatSystem.ts";
+import { MISSILES, launchMissile } from "../src/combat/Missiles.ts";
 import { CombatView } from "../src/combat/CombatView.ts";
 
 const emptyWorld = { groundHeight: () => 0, blocked: () => false };
@@ -63,7 +65,7 @@ test("flight quaternion completes inverted loops and unrestricted rolls", () => 
 test("lock requires alignment, range and line of sight; unavailable shots explain why", () => {
   const p = player(),
     system = new CombatSystem();
-  system.start("intercept", p);
+  system.start("intercept", p, { patrol: true });
   aimAt(p, system.target!.position);
   for (let i = 0; i < 90; i++)
     system.step(1 / 60, p, combatNeutral, {
@@ -88,7 +90,7 @@ test("lock requires alignment, range and line of sight; unavailable shots explai
 test("missile launches are edge-triggered, finite-rate guided and ammunition bounded", () => {
   const p = player(),
     system = new CombatSystem();
-  system.start("intercept", p);
+  system.start("intercept", p, { patrol: true });
   for (let i = 0; i < 80; i++) {
     aimAt(p, system.target!.position);
     system.step(1 / 60, p, combatNeutral, emptyWorld);
@@ -116,20 +118,27 @@ test("missile launches are edge-triggered, finite-rate guided and ammunition bou
     missile.position.distanceTo(missile.previous) <= missile.speed / 60 + 1e-7,
   );
 });
-test("countermeasures break nearby guidance once per press and expose incoming threat", () => {
+test("flares are judged by seekers that see them, once per press, and incoming threats are exposed", () => {
   const p = player(),
     system = new CombatSystem();
-  system.start("intercept", p);
-  const missile = system.missiles[0];
-  missile.active = true;
-  missile.hostile = true;
-  missile.targetId = 0;
-  missile.position.copy(p.position).add(new Vector3(0, 0, 1000));
-  missile.direction.set(0, 0, -1);
+  system.start("intercept", p, { patrol: true });
+  const missile = launchMissile(
+    system.missiles[0],
+    MISSILES.aam,
+    p.position.clone().add(new Vector3(0, 0, 1000)),
+    new Vector3(0, 0, -1),
+    true,
+    1,
+    PLAYER_ID,
+    500,
+  );
   system.step(1 / 60, p, combatNeutral, emptyWorld);
   assert.equal(system.status.threat, true);
+  assert.equal(missile.guided, true);
   system.step(1 / 60, p, { ...combatNeutral, flare: true }, emptyWorld);
-  assert.equal(missile.guided, false);
+  // The flare entered the seeker's view and was rolled for exactly once.
+  assert.equal(missile.flaresSeen & 1, 1);
+  assert.equal(missile.guided, (missile.flaresDecoyed & 1) === 0);
   assert.equal(system.status.flares, 11);
   for (let i = 0; i < 100; i++)
     system.step(1 / 60, p, { ...combatNeutral, flare: true }, emptyWorld);
@@ -139,7 +148,7 @@ test("countermeasures break nearby guidance once per press and expose incoming t
 test("cannon swept hits produce centralized damage and kill feedback", () => {
   const p = player(),
     system = new CombatSystem();
-  system.start("intercept", p);
+  system.start("intercept", p, { patrol: true });
   const target = system.enemies[0];
   target.position.set(0, 5000, -180);
   target.previous.copy(target.position);
@@ -164,7 +173,7 @@ test("cannon swept hits produce centralized damage and kill feedback", () => {
 test("guided missiles catch a moving target and resolve damage through combat events", () => {
   const p = player(),
     system = new CombatSystem();
-  system.start("intercept", p);
+  system.start("intercept", p, { patrol: true });
   const target = system.enemies[0];
   target.speed = 90;
   let fired = 0;
@@ -193,7 +202,7 @@ test("guided missiles catch a moving target and resolve damage through combat ev
 test("terrain recovery precedes attacks and bounds enemy angular motion", () => {
   const p = player(),
     system = new CombatSystem();
-  system.start("intercept", p);
+  system.start("intercept", p, { patrol: true });
   const target = system.enemies[0];
   target.position.set(0, 1100, -600);
   target.previous.copy(target.position);
@@ -212,7 +221,7 @@ test("combat fixed-step outcomes match 30, 60 and 144 render rates", () => {
   const run = (fps: number) => {
     const p = player(),
       system = new CombatSystem();
-    system.start("intercept", p);
+    system.start("intercept", p, { patrol: true });
     let accumulator = 0;
     for (let frame = 0; frame < fps * 8; frame++) {
       accumulator += 1 / fps;
@@ -248,11 +257,11 @@ test("mission outcomes reset cleanly and projectiles/events stay bounded", () =>
   system.ally!.active = false;
   system.step(1 / 60, p, combatNeutral, emptyWorld);
   assert.equal(system.failed, true);
-  system.start("intercept", p);
+  system.start("intercept", p, { patrol: true });
   for (let i = 0; i < 1200; i++)
     system.step(1 / 60, p, { ...combatNeutral, gun: true }, emptyWorld);
   assert.equal(system.tracers.length, 96);
-  assert.equal(system.missiles.length, 16);
+  assert.equal(system.missiles.length, 24);
   assert.ok(system.drainEvents().length <= 128);
   system.stop();
   assert.equal(system.active, null);
@@ -263,7 +272,7 @@ test("mission outcomes reset cleanly and projectiles/events stay bounded", () =>
 test("combat view rebases globals and preserves normalized aircraft transform once", () => {
   const p = player(),
     system = new CombatSystem();
-  system.start("intercept", p);
+  system.start("intercept", p, { patrol: true });
   const view = new CombatView(),
     template = new Group();
   template.scale.setScalar(8);

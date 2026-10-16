@@ -23,7 +23,7 @@ const player = (): CombatPlayer => ({
 test("held launch during the initial approach locks quickly and damages without manual steering", () => {
   const p = player(),
     combat = new CombatSystem();
-  combat.start("intercept", p);
+  combat.start("intercept", p, { patrol: true });
   const target = combat.target!;
   const startHealth = target.health;
   let lockAt = 0;
@@ -41,7 +41,7 @@ test("held launch during the initial approach locks quickly and damages without 
 test("default centered intercept can be hit by holding the cannon without precision steering", () => {
   const p = player(),
     combat = new CombatSystem();
-  combat.start("intercept", p);
+  combat.start("intercept", p, { patrol: true });
   const target = combat.target!;
   for (let i = 0; i < 300 && target.active; i++) {
     p.previous.copy(p.position);
@@ -57,7 +57,13 @@ test("default Haven flight with target follow gets the first cannon kill over ac
     combat = new CombatSystem(),
     steering = new Vector3();
   flight.reset();
-  combat.start("intercept", flight);
+  // B-key patrol from the classic airborne start south of Haven (sorties begin parked).
+  flight.position.set(0, 1250, 2800);
+  flight.previous.copy(flight.position);
+  flight.velocity.set(0, 0, -155);
+  flight.speed = 155;
+  flight.onGround = false;
+  combat.start("intercept", flight, { patrol: true });
   const first = combat.target!;
   for (let i = 0; i < 600 && first.active; i++) {
     const aimDirection = combat.getAimDirection(flight, steering) ?? undefined;
@@ -71,11 +77,11 @@ test("default Haven flight with target follow gets the first cannon kill over ac
 test("a quick missile tap buffers acquisition once, while occluded requests expire", () => {
   const p = player(),
     combat = new CombatSystem();
-  combat.start("intercept", p);
+  combat.start("intercept", p, { patrol: true });
   combat.step(1 / 60, p, { ...combatNeutral, missile: true }, clear);
   for (let i = 0; i < 120; i++) combat.step(1 / 60, p, combatNeutral, clear);
   assert.equal(combat.status.missiles, 11);
-  combat.start("intercept", p);
+  combat.start("intercept", p, { patrol: true });
   combat.step(
     1 / 60,
     p,
@@ -111,7 +117,7 @@ test("predictive lead meets a moving target at a constant-speed intercept and st
 test("cannon assist respects angular/range limits and occlusion rather than granting remote damage", () => {
   const p = player(),
     combat = new CombatSystem();
-  combat.start("intercept", p);
+  combat.start("intercept", p, { patrol: true });
   const target = combat.target!,
     aim = new Vector3();
   target.position.set(100, 5000, -1000);
@@ -148,7 +154,7 @@ test("cannon assist respects angular/range limits and occlusion rather than gran
 test("wider lock remains unavailable behind the player or through terrain", () => {
   const p = player(),
     combat = new CombatSystem();
-  combat.start("intercept", p);
+  combat.start("intercept", p, { patrol: true });
   const target = combat.target!;
   target.speed = 0;
   target.velocity.set(0, 0, 0);

@@ -1,5 +1,21 @@
 import * as T from "three";
 import { CombatSystem, type CombatEntity } from "./CombatSystem";
+import {
+  createDefenseTemplates,
+  loadDefenseTemplates,
+  type DefenseTemplates,
+} from "./DefenseModels";
+
+/** SAM vehicles' combat positions sit at their hull centre, above the model origin. */
+const SAM_HULL_HEIGHT = 3;
+const MAX_MISSILES = 32;
+
+interface DefenseParts {
+  turret?: T.Object3D;
+  canisters?: T.Object3D;
+  antenna?: T.Object3D;
+  wrecked: boolean;
+}
 
 /** Render-only combat presentation; globals are converted against origin on every update. */
 export class CombatView {
@@ -31,6 +47,12 @@ export class CombatView {
   private dishGeometry: T.BufferGeometry;
   private groundMaterial: T.MeshStandardMaterial;
   private disposed = false;
+  private defense?: DefenseTemplates;
+  private defenseParts = new Map<number, DefenseParts>();
+  private wreckMaterial: T.MeshStandardMaterial;
+  private bodyYaw = new T.Quaternion();
+  private turn = new T.Quaternion();
+  private up = new T.Vector3(0, 1, 0);
 
   constructor(scene?: T.Scene) {
     this.group.name = "combat-entities";
@@ -93,6 +115,13 @@ export class CombatView {
         metalness: 0.25,
       }),
     );
+    this.wreckMaterial = ownMaterial(
+      new T.MeshStandardMaterial({
+        color: 0x1b1a18,
+        roughness: 1,
+        metalness: 0,
+      }),
+    );
     const missileGeometry = ownGeometry(new T.ConeGeometry(0.23, 2.3, 6));
     missileGeometry.rotateX(-Math.PI / 2);
     const missileMaterial = ownMaterial(
@@ -101,7 +130,7 @@ export class CombatView {
     this.missileMesh = new T.InstancedMesh(
       missileGeometry,
       missileMaterial,
-      16,
+      MAX_MISSILES,
     );
     this.missileMesh.count = 0;
     this.missileMesh.instanceMatrix.setUsage(T.DynamicDrawUsage);
@@ -142,10 +171,45 @@ export class CombatView {
     for (const root of this.entities.values()) root.removeFromParent();
     this.entities.clear();
   }
+  /** Real launcher/radar models replace the procedural placeholders when they load. */
+  setDefenseTemplates(templates: DefenseTemplates) {
+    this.defense = templates;
+    for (const id of this.defenseParts.keys()) {
+      this.entities.get(id)?.removeFromParent();
+      this.entities.delete(id);
+    }
+    this.defenseParts.clear();
+  }
+  /** Fetches public/assets/defense/*.glb when present; keeps placeholders otherwise. */
+  async loadDefenseModels(loader: {
+    loadAsync(url: string): Promise<{ scene: T.Object3D }>;
+  }) {
+    const templates = await loadDefenseTemplates(
+      loader,
+      this.defense ?? createDefenseTemplates(),
+    );
+    if (!this.disposed) this.setDefenseTemplates(templates);
+  }
   private visual(entity: CombatEntity) {
     const root = new T.Group();
     root.name = `combat-${entity.id}`;
-    if (entity.kind === "ground") {
+    if (entity.role === "sam-launcher" || entity.role === "sam-radar") {
+      this.defense ??= createDefenseTemplates();
+      const model = (
+        entity.role === "sam-launcher"
+          ? this.defense.launcher
+          : this.defense.radar
+      ).clone(true);
+      root.add(model);
+      this.defenseParts.set(entity.id, {
+        turret: model.getObjectByName("turret"),
+        canisters: model.getObjectByName("canisters"),
+        antenna: model.getObjectByName("antenna"),
+        wrecked: false,
+      });
+    } else if (entity.role === "target") {
+      // Strike installations are world buildings (Airbase); combat only tracks them.
+    } else if (entity.kind === "ground") {
       const base = new T.Mesh(this.groundGeometry, this.groundMaterial);
       base.position.y = -12;
       const mast = new T.Mesh(this.mastGeometry, this.groundMaterial);
@@ -186,21 +250,18 @@ export class CombatView {
     if (this.disposed) return;
     this.group.visible = system.active !== null;
     for (const root of this.entities.values()) root.visible = false;
-    const entities = system.ally
-      ? [...system.enemies, system.ally]
-      : system.enemies;
-    for (const entity of entities) {
-      const root = this.entities.get(entity.id) ?? this.visual(entity);
-      root.visible = entity.active;
-      root.position.copy(entity.position).sub(origin);
-      root.quaternion.copy(entity.quaternion);
-    }
+    for (const entity of system.enemies) this.place(system, entity, origin);
+    if (system.ally) this.place(system, system.ally, origin);
     let missiles = 0;
     for (const missile of system.missiles) {
-      if (!missile.active) continue;
+      if (!missile.active || missiles >= MAX_MISSILES) continue;
       this.local.copy(missile.position).sub(origin);
       this.quaternion.setFromUnitVectors(this.forward, missile.direction);
-      this.matrix.compose(this.local, this.quaternion, this.scale);
+      this.matrix.compose(
+        this.local,
+        this.quaternion,
+        this.scale.setScalar(missile.profile.scale),
+      );
       this.missileMesh.setMatrixAt(missiles, this.matrix);
       this.missileMesh.setColorAt(
         missiles,
@@ -231,9 +292,50 @@ export class CombatView {
     this.tracerGeometry.attributes.position.needsUpdate =
       this.tracerGeometry.attributes.color.needsUpdate = true;
   }
+  private place(
+    system: CombatSystem,
+    entity: CombatEntity,
+    origin: T.Vector3,
+  ) {
+    const root = this.entities.get(entity.id) ?? this.visual(entity);
+    root.position.copy(entity.position).sub(origin);
+    root.quaternion.copy(entity.quaternion);
+    const parts = this.defenseParts.get(entity.id);
+    if (!parts) {
+      root.visible = entity.active;
+      return;
+    }
+    // Destroyed vehicles stay as charred wrecks; the battery's state drives the rest.
+    root.visible = true;
+    root.position.y -= SAM_HULL_HEIGHT;
+    if (!entity.active) {
+      if (!parts.wrecked) {
+        parts.wrecked = true;
+        root.traverse((o) => {
+          if (o instanceof T.Mesh) o.material = this.wreckMaterial;
+        });
+        root.scale.set(1, 0.7, 1);
+      }
+      root.rotateZ(0.12);
+      return;
+    }
+    const unit = system.airDefense.unitFor(entity.id);
+    if (!unit) return;
+    // Slew angles are world headings; the hull may face anywhere.
+    parts.turret?.rotation.set(0, this.relativeYaw(entity, unit.turretYaw), 0);
+    parts.canisters?.rotation.set(unit.elevation, 0, 0);
+    parts.antenna?.rotation.set(0, this.relativeYaw(entity, unit.antenna), 0);
+  }
+  private relativeYaw(entity: CombatEntity, yaw: number) {
+    this.bodyYaw.copy(entity.quaternion).invert();
+    this.turn.setFromAxisAngle(this.up, yaw).premultiply(this.bodyYaw);
+    this.local.set(0, 0, -1).applyQuaternion(this.turn);
+    return Math.atan2(-this.local.x, -this.local.z);
+  }
   clear() {
     for (const root of this.entities.values()) root.removeFromParent();
     this.entities.clear();
+    this.defenseParts.clear();
     this.missileMesh.count = 0;
     this.tracerGeometry.setDrawRange(0, 0);
   }
