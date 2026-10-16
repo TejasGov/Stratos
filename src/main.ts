@@ -38,6 +38,7 @@ import {
 } from "./aircraft";
 import { CombatSystem, type CombatMission } from "./combat/CombatSystem";
 import { CombatView } from "./combat/CombatView";
+import { HOME_UMBRELLA, SAM_RULES, radarDetectionRange } from "./combat/AirDefense";
 
 type State = "menu" | "flight" | "paused" | "crashed";
 interface Save {
@@ -122,6 +123,8 @@ class Game {
   private fps = 60;
   private telemetry = new FrameTelemetry();
   private lastThreatCue = 0;
+  /** Warning-receiver cues: search pings, launch warble cadence. */
+  private rwrAudio = { search: 0, ping: 0, launch: 0 };
   /** What Haven Control has already called this flight. */
   private radio = { milestone: 0, kills: 0, damaged: false, threat: false, terrainCue: 0 };
   private lastLock = false;
@@ -178,6 +181,9 @@ class Game {
     this.combatView.group.traverse((o) => {
       if (o instanceof T.LineSegments) o.layers.set(TRANSPARENT_LAYER);
     });
+    this.combatView.loadDefenseModels(this.gltf).catch(() => {});
+    // Strike damage shows on the world's buildings; combat never imports world code.
+    this.combat.onTargetDestroyed = (id) => this.airbase()?.destroy(id);
     this.physicsReady = import("./physics/CollisionWorld")
       .then(({ CollisionWorld }) => CollisionWorld.create(heightAt))
       .then((physics) => {
@@ -266,6 +272,7 @@ class Game {
     this.plane.add(model);
     this.airframe = a;
     Object.assign(this.flight.performance, a.performance);
+    this.combat.rcs = a.rcs;
     const scale = airframeScale(a);
     this.supersonic.setAirframe(
       a.nozzles.map((n) => airframePoint(a, n)),
@@ -598,7 +605,7 @@ class Game {
         } else {
           this.mission.stop();
           this.buildRings();
-          this.combat.start("intercept", this.flight);
+          this.combat.start("intercept", this.flight, { patrol: true });
           this.resetRadio();
           this.comms.say("intercept", 0.6);
           this.targetFollow = this.settings.controlMode === "assisted";
@@ -671,6 +678,7 @@ class Game {
     this.mission.stop();
     this.combat.stop();
     this.combatView.clear();
+    this.airbase()?.reset();
     this.effects.clear();
     this.telemetry.reset();
     this.missileEmitters.clear();
@@ -1432,8 +1440,12 @@ class Game {
   private processCombatEvents() {
     for (const event of this.combat.drainEvents()) {
       if (event.type === "explosion") {
-        this.effects.emitExplosion(event.position, event.scale ?? 1);
+        this.effects.emitExplosion(event.position, event.scale ?? 1, event.kind ?? "air");
         this.audio.cue("explosion");
+      } else if (event.type === "samLaunch") {
+        if (event.direction) this.effects.emitLaunch(event.position, event.direction);
+        this.audio.rwrLaunch();
+        this.rwrAudio.launch = this.time;
       } else if (event.type === "gun" || event.type === "missile") {
         if (event.player) this.audio.cue(event.type);
       } else if (event.type === "flare") {
@@ -1451,6 +1463,11 @@ class Game {
         );
       }
     }
+  }
+  /** Blackridge buildings, when the world provides them. */
+  private airbase() {
+    return (this.world as { airbase?: { destroy(id: string): void; reset(): void } })
+      .airbase;
   }
   private combatBlocked(from: T.Vector3, to: T.Vector3) {
     if (this.physics?.sweep(from, to, undefined, 0.5)) return true;
@@ -1567,7 +1584,8 @@ class Game {
           ? `NAV  GATE ${Math.min(this.mission.index + 1, routes[this.mission.active].points.length)}/${routes[this.mission.active].points.length}`
           : "NAV",
       warning: this.warningText,
-      threat: !!this.combat.active && status.threat,
+      threat: !!this.combat.active && (status.threat || status.samLaunch),
+      rwr: this.combat.active && !this.combat.completed && !this.combat.failed ? this.combat.warning : undefined,
       target: enemy
         ? {
             position: this.hudTarget.copy(enemy.position).sub(this.world.origin),
@@ -1635,7 +1653,10 @@ class Game {
     const active = !!this.combat.active && this.state !== "menu";
     el("combat-panel").hidden = !active;
     el("hit-confirm").hidden = this.time >= this.hitUntil || !active;
-    if (!active) return;
+    if (!active) {
+      this.audio.rwrTone(false);
+      return;
+    }
     const status = this.combat.status;
     el("combat-state").textContent = this.combat.completed
       ? "SORTIE COMPLETE"
@@ -1643,7 +1664,9 @@ class Game {
         ? "SORTIE FAILED"
         : status.threat
           ? "INCOMING MISSILE"
-          : "COMBAT PATROL";
+          : status.samLaunch
+            ? "SAM LAUNCH"
+            : "COMBAT PATROL";
     el("combat-target").textContent =
       status.targetId === null
         ? "NO TARGET"
@@ -1681,10 +1704,33 @@ class Game {
         this.audio.cue("warning");
         this.lastThreatCue = this.time;
       }
-    }
+    } else if (status.samLaunch && this.state === "flight")
+      this.warningText = "SAM LAUNCH · BREAK / FLARES";
+    this.updateRwrAudio();
     if (status.canFire && !this.lastLock && this.state === "flight")
       this.audio.cue("lock");
     this.lastLock = status.canFire;
+  }
+  /** Search pings as emitters appear (and on their sweep), track tone, repeated launch warble. */
+  private updateRwrAudio() {
+    const w = this.combat.warning;
+    const flying = this.state === "flight" && !!this.combat.active;
+    let search = 0,
+      track = false;
+    for (let i = 0; flying && i < w.count; i++) {
+      if (w.contacts[i].level === 1) search++;
+      else if (w.contacts[i].level === 2) track = true;
+    }
+    if (search > this.rwrAudio.search || (search && this.time - this.rwrAudio.ping > 2.6)) {
+      this.audio.rwrPing();
+      this.rwrAudio.ping = this.time;
+    }
+    this.rwrAudio.search = search;
+    this.audio.rwrTone(flying && track && !w.missile);
+    if (flying && w.missile && w.missileSam && this.time - this.rwrAudio.launch > 1.6) {
+      this.audio.rwrLaunch();
+      this.rwrAudio.launch = this.time;
+    }
   }
   private drawMap() {
     const canvas = el<HTMLCanvasElement>("map"),
@@ -1738,6 +1784,7 @@ class Game {
         : "#a2c6b9";
       ctx.strokeRect(p[0] - 3, p[1] - 3, 6, 6);
     }
+    if (this.combat.active) this.drawDefenseMap(ctx, point, size / range);
     if (this.combat.ally?.active) {
       const p = point(this.combat.ally.position.x, this.combat.ally.position.z);
       ctx.fillStyle = "#84e2ed";
@@ -1750,7 +1797,7 @@ class Game {
     }
     if (this.combat.active)
       for (const enemy of this.combat.enemies) {
-        if (enemy.health <= 0) continue;
+        if (enemy.health <= 0 || enemy.role.startsWith("sam")) continue;
         const p = point(enemy.position.x, enemy.position.z);
         ctx.fillStyle =
           enemy.id === this.combat.status.targetId ? "#ffdb8b" : "#ff9b83";
@@ -1782,6 +1829,59 @@ class Game {
     ctx.fillStyle = "#d5e6cf";
     ctx.font = "10px monospace";
     ctx.fillText("N", size / 2 - 3, 13);
+  }
+  /** SAM sites: dashed radar rings (scaled by this jet's rcs) and solid short-range rings. */
+  private drawDefenseMap(
+    ctx: CanvasRenderingContext2D,
+    point: (x: number, z: number) => number[],
+    pixelsPerMetre: number,
+  ) {
+    ctx.save();
+    const home = point(HOME_UMBRELLA.x, HOME_UMBRELLA.z);
+    ctx.strokeStyle = "#84e2ed30";
+    ctx.setLineDash([2, 3]);
+    ctx.beginPath();
+    ctx.arc(home[0], home[1], HOME_UMBRELLA.radius * pixelsPerMetre, 0, Math.PI * 2);
+    ctx.stroke();
+    for (const u of this.combat.airDefense.units) {
+      const p = point(u.site.x, u.site.z);
+      const radar = u.rules.type === "mrsam";
+      const alive = u.state !== "destroyed";
+      if (alive) {
+        const reach = radar ? radarDetectionRange(this.combat.rcs) : SAM_RULES.shorad.detectRange;
+        ctx.setLineDash(radar ? [5, 4] : []);
+        ctx.strokeStyle = u.track > 0 ? "#ff6a5c70" : radar ? "#ff8a6a38" : "#ffc46a38";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(p[0], p[1], reach * pixelsPerMetre, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+      ctx.strokeStyle = alive ? (radar ? "#ff8a6a" : "#ffc46a") : "#8a8a8a";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      if (alive) {
+        // Triangle for short-range launchers, diamond for radar batteries.
+        if (radar) {
+          ctx.moveTo(p[0], p[1] - 4);
+          ctx.lineTo(p[0] + 4, p[1]);
+          ctx.lineTo(p[0], p[1] + 4);
+          ctx.lineTo(p[0] - 4, p[1]);
+        } else {
+          ctx.moveTo(p[0], p[1] - 4);
+          ctx.lineTo(p[0] + 4, p[1] + 3);
+          ctx.lineTo(p[0] - 4, p[1] + 3);
+        }
+        ctx.closePath();
+      } else {
+        ctx.moveTo(p[0] - 3, p[1] - 3);
+        ctx.lineTo(p[0] + 3, p[1] + 3);
+        ctx.moveTo(p[0] + 3, p[1] - 3);
+        ctx.lineTo(p[0] - 3, p[1] + 3);
+      }
+      ctx.stroke();
+    }
+    ctx.restore();
   }
   private resetRadio() {
     // Milestones already below the start altitude are not news.
