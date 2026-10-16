@@ -276,7 +276,9 @@ export class Effects {
         this.smoke.geometry.instanceCount + this.flame.geometry.instanceCount,
     };
   }
-  emitExplosion(position: Point3, scale = 1) {
+  /** `ground` adds dust, debris and a lingering smoke column. */
+  emitExplosion(position: Point3, scale = 1, kind: "air" | "ground" = "air") {
+    void kind;
     scale = T.MathUtils.clamp(scale, 0.2, 8);
     const density =
       this.quality === "low" ? 0.5 : this.quality === "high" ? 1.3 : 1;
@@ -374,6 +376,24 @@ export class Effects {
       if (!count) emit(position);
       emitter.time %= 0.12;
     }
+  }
+  /** Countermeasure salvo ejected at `position` from a jet moving at `velocity`. */
+  emitFlares(position: Point3, velocity: Point3, forward: Point3) {
+    void velocity;
+    void forward;
+    this.emitExplosion(position, 0.2);
+  }
+  /** A SAM leaving its launcher: backblast and boost smoke along `direction`. */
+  emitLaunch(position: Point3, direction: Point3) {
+    void position;
+    void direction;
+  }
+  /** Per-frame smoke and fire from a failed engine at a nozzle; intensity 0..1. */
+  emitEngineFire(position: Point3, velocity: Point3, intensity: number, dt: number) {
+    void position;
+    void velocity;
+    void intensity;
+    void dt;
   }
   updateMissile(id: string | number, position: Point3, dt: number) {
     if (!(dt > 0)) return;

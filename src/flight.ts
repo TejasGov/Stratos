@@ -20,6 +20,12 @@ export function speedOfSound(altitude: number) {
     h <= 11000 ? 288.15 - 0.0065 * h : h <= 20000 ? 216.65 : 216.65 + 0.001 * (h - 20000);
   return 20.047 * Math.sqrt(temperature);
 }
+/** One engine's state; single-engine jets have one entry. */
+export interface EngineState {
+  /** 0..1 spool (thrust share actually delivered). */
+  output: number;
+  failed: boolean;
+}
 export const neutral: Controls = {
   pitch: 0,
   roll: 0,
@@ -45,6 +51,14 @@ export class Flight {
   boost = false;
   /** Airframe multipliers: dry thrust, afterburner, drag and control authority. */
   performance = { thrust: 1, afterburner: 1, drag: 1, agility: 1 };
+  /** Per-engine state, one entry per engine of the current airframe. */
+  engines: EngineState[] = [{ output: 0.63, failed: false }];
+  /** Wheels on a runway (takeoff roll, landing rollout). */
+  onGround = false;
+  airbrake = false;
+  /** Angle of attack (rad) between nose and flight path; post-stall while it is very high. */
+  aoa = 0;
+  postStall = false;
   /** Mach number, ambient density ratio and smoothed load factor (G) for HUD and effects. */
   mach = 0.46;
   density = 1;
@@ -94,6 +108,15 @@ export class Flight {
     this.gLoad = 1;
     this.lastVelocity.copy(this.velocity);
     this.updateAtmosphere();
+  }
+  /** Fails one running engine (missile hit); returns how many still run. */
+  damageEngine() {
+    const engine = this.engines.find((e) => !e.failed);
+    if (engine) {
+      engine.failed = true;
+      engine.output = 0;
+    }
+    return this.engines.filter((e) => !e.failed).length;
   }
   private updateAtmosphere() {
     this.density = airDensityRatio(this.position.y);
