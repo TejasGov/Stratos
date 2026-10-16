@@ -1,3 +1,4 @@
+import { FUNNEL_FAR, FUNNEL_NEAR, PADS } from "./basePads";
 export const CHUNK = 1600;
 export const SEED = 7319;
 export function hash(x: number, z: number) {
@@ -17,6 +18,16 @@ function ellipse(
 ) {
   return smooth(clamp(1 - Math.hypot((x - cx) / rx, (z - cz) / rz)));
 }
+/** 1 on an air-base pad, fading over its blend skirt: keeps trees and scenery off it. */
+function padMask(x: number, z: number) {
+  let m = 0;
+  for (const pad of PADS) {
+    const qx = Math.max(Math.abs(x - pad.x) - pad.hx, 0);
+    const qz = Math.max(Math.abs(z - pad.z) - pad.hz, 0);
+    m = Math.max(m, 1 - smooth(clamp(Math.hypot(qx, qz) / pad.blend)));
+  }
+  return m;
+}
 /** Geographical masks shared by materials, prop placement and terrain shaping. */
 export function regionMasks(x: number, z: number) {
   const valleyCenter = 180 + Math.sin((z + 900) / 1100) * 370;
@@ -24,7 +35,7 @@ export function regionMasks(x: number, z: number) {
     Math.exp(-(((x - valleyCenter) / 380) ** 2)) *
     ellipse(x, z, 250, -1200, 1700, 2700);
   const infrastructure = Math.max(
-    ellipse(x, z, -900, 0, 650, 1250),
+    padMask(x, z),
     ellipse(x, z, 1850, -1050, 500, 650),
   );
   const moisture = clamp(
@@ -32,7 +43,7 @@ export function regionMasks(x: number, z: number) {
   );
   return { drainage, infrastructure, moisture };
 }
-function noise(x: number, z: number) {
+export function noise(x: number, z: number) {
   const ix = Math.floor(x),
     iz = Math.floor(z),
     u = smooth(x - ix),
@@ -128,9 +139,30 @@ export function heightAt(x: number, z: number): number {
   // Keep the bridge spanning a channel rather than buried inside a ridge.
   const channel = ellipse(x, z, 2500, -500, 240, 850);
   h = h * (1 - channel) - 14 * channel;
-  const airfieldDistance = Math.hypot((x + 900) / 400, z / 900);
-  const flatten = Math.max(0, Math.min(1, (1.25 - airfieldDistance) * 3));
-  h = h * (1 - flatten) + 28 * flatten;
+  return applyPads(x, z, h);
+}
+/**
+ * Air-base ground: flat core, blend skirt and a clearance funnel that lowers
+ * terrain climbing off the runway ends. The GLSL twin is `applyPads` in
+ * terrainGlsl.ts (tests/bases.test.ts checks they agree).
+ */
+export function applyPads(x: number, z: number, h: number): number {
+  for (const pad of PADS) {
+    const qx = Math.max(Math.abs(x - pad.x) - pad.hx, 0);
+    const qz = Math.max(Math.abs(z - pad.z) - pad.hz, 0);
+    const outside = Math.sqrt(qx * qx + qz * qz);
+    // Rugged, noisy ceiling rising off the pad; the soft minimum only ever cuts.
+    const rise = qx * pad.slopeX + qz * pad.slopeZ;
+    const cap = pad.height + rise * (1 + (noise(x / 260, z / 260) - 0.5) * 0.5);
+    const k = 40;
+    const d = Math.max(k - Math.abs(h - cap), 0);
+    const smin = Math.min(h, cap) - (d * d) / (4 * k);
+    const reach = 1 - smooth(clamp((outside - FUNNEL_NEAR) / (FUNNEL_FAR - FUNNEL_NEAR)));
+    const carved = h + reach * (smin - h);
+    const t = clamp(outside / pad.blend);
+    const flat = 1 - t * t * (3 - 2 * t);
+    h = carved + flat * (pad.height - carved);
+  }
   return h;
 }
 /**
