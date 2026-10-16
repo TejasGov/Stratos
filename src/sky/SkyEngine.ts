@@ -5,6 +5,7 @@ import {
   sunlightTransmittance,
 } from "./Atmosphere";
 import { Clouds, type CloudQuality } from "./Clouds";
+import { Lightning } from "./Lightning";
 import { FullscreenPass, hdrTarget, passMaterial } from "./FullscreenPass";
 import { COMPOSITE } from "./shaders/composite";
 import { ATMOSPHERE_GLSL } from "./shaders/atmosphere";
@@ -66,6 +67,14 @@ void main() {
 }`;
 
 export type SkyQuality = CloudQuality;
+export type WeatherName = "clear" | "fair" | "towering" | "storm";
+/** Cloud coverage, storm-core strength and density for each sky preset. */
+export const WEATHER: Record<WeatherName, { coverage: number; storm: number; density: number }> = {
+  clear: { coverage: 0.2, storm: 0, density: 0.9 },
+  fair: { coverage: 0.52, storm: 0.12, density: 1 },
+  towering: { coverage: 0.7, storm: 0.5, density: 1.1 },
+  storm: { coverage: 0.9, storm: 1, density: 1.25 },
+};
 
 export interface FrameEffects {
   speedBlur: number;
@@ -81,6 +90,7 @@ export interface FrameEffects {
 export class SkyEngine {
   readonly atmosphere = new Atmosphere();
   readonly clouds: Clouds;
+  readonly lightning: Lightning;
   readonly time = new TimeOfDay();
   readonly sunColor = new T.Color();
   readonly effects: FrameEffects = {
@@ -133,6 +143,8 @@ export class SkyEngine {
   private envAltitude = -1e9;
   private elapsed = 0;
   private altitude = 1;
+  private origin = new T.Vector3();
+  private resolution = new T.Vector2();
   constructor(
     private renderer: T.WebGLRenderer,
     private sunLight: T.DirectionalLight,
@@ -147,6 +159,7 @@ export class SkyEngine {
     this.sceneTarget.depthTexture = this.depth;
     this.compositeTarget = hdrTarget(1, 1, { depthBuffer: true });
     this.clouds = new Clouds(this.atmosphere, this.depth);
+    this.lightning = new Lightning(this.clouds, TRANSPARENT_LAYER);
     const lut = this.atmosphere.uniforms;
     this.composite = new FullscreenPass(
       passMaterial({
@@ -178,6 +191,7 @@ export class SkyEngine {
           uAerialRange: { value: AERIAL_RANGE_KM },
           uOceanDetail: { value: 1 },
           uPixelAngle: { value: 0.001 },
+          uFlash: { value: new T.Vector4() },
         },
       }),
     );
@@ -300,6 +314,12 @@ export class SkyEngine {
     );
     this.envScene.add(this.envDome);
   }
+  weather: WeatherName = "fair";
+  setWeather(name: WeatherName) {
+    this.weather = name;
+    Object.assign(this.clouds.weatherState, WEATHER[name]);
+    this.clouds.invalidate();
+  }
   setQuality(quality: SkyQuality) {
     this.quality = quality;
     this.clouds.setQuality(quality);
@@ -408,8 +428,12 @@ export class SkyEngine {
     renderer.clear(true, true, true);
     renderer.render(scene, camera);
 
-    // 2. Clouds (reduced resolution, temporally resolved).
+    // 2. Lightning sets this frame's in-cloud flash, then the clouds
+    //    (reduced resolution, temporally resolved).
+    this.origin.copy(cameraGlobal).sub(camera.position);
+    this.lightning.update(dt, cameraGlobal, this.origin, camera, this.resolution.set(this.width, this.height));
     this.clouds.render(renderer, camera, cameraGlobal, SUN_ILLUMINANCE);
+    this.lightning.bindClouds();
     const [cloudColor, cloudDepth] = this.clouds.textures;
 
     // 3. Atmosphere + ocean + cloud composite, carrying depth forward.
@@ -424,8 +448,12 @@ export class SkyEngine {
     u.uProjection.value.copy(camera.projectionMatrix);
     u.uCameraGlobal.value.copy(cameraGlobal);
     u.uTime.value = this.elapsed;
+    const flash = this.lightning.flash;
+    u.uFlash.value.set(flash.x - cameraGlobal.x, 1100 - cameraGlobal.y, flash.z - cameraGlobal.z, this.lightning.light.intensity);
     const highStars = T.MathUtils.smoothstep(altitude, 25000, 40000);
-    u.uStars.value = this.debug.stars ? Math.max(this.time.night, highStars * 0.04) : 0;
+    // Stars only once the sun is well below the horizon (nautical twilight onward).
+    const starNight = T.MathUtils.smoothstep(-this.time.sun.y, 0.07, 0.22);
+    u.uStars.value = this.debug.stars ? Math.max(starNight, highStars * 0.04) : 0;
     u.uPixelAngle.value =
       (2 * Math.tan(T.MathUtils.degToRad(camera.fov) / 2)) / this.height;
     this.composite.render(renderer, this.compositeTarget);
@@ -543,7 +571,8 @@ export class SkyEngine {
     f.uFlash.value = this.effects.flash;
     const night = this.time.night;
     f.uMinExposure.value = 0.25;
-    f.uMaxExposure.value = T.MathUtils.lerp(5, 40, night);
+    // Open the eye up through twilight, well before full night.
+    f.uMaxExposure.value = T.MathUtils.lerp(5, 40, T.MathUtils.smoothstep(-this.time.sun.y, -0.06, 0.08));
     f.uRays.value = onScreen && this.debug.rays ? 0.3 * SUN_ILLUMINANCE * (1 - night) : 0;
     f.uFlare.value = this.debug.flare ? 1 : 0;
     f.uTonemapper.value = this.debug.tonemapper;

@@ -135,6 +135,13 @@ export class CombatView {
     for (const root of this.entities.values()) root.removeFromParent();
     this.entities.clear();
   }
+  private enemyTemplates: T.Object3D[] = [];
+  /** Hostile fighters cycle through these airframes (by entity id). */
+  setEnemyTemplates(models: T.Object3D[]) {
+    this.enemyTemplates = models;
+    for (const root of this.entities.values()) root.removeFromParent();
+    this.entities.clear();
+  }
   private visual(entity: CombatEntity) {
     const root = new T.Group();
     root.name = `combat-${entity.id}`;
@@ -147,7 +154,11 @@ export class CombatView {
       dish.position.y = 11;
       root.add(base, mast, dish);
     } else {
-      if (this.template) root.add(this.template.clone(true));
+      const template =
+        entity.kind === "air" && this.enemyTemplates.length
+          ? this.enemyTemplates[entity.id % this.enemyTemplates.length]
+          : this.template;
+      if (template) root.add(template.clone(true));
       else {
         const material =
           entity.kind === "ally" ? this.allyMaterial : this.bodyMaterial;

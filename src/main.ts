@@ -1,6 +1,7 @@
 import "./style.css";
 import * as T from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
 import { animate, createTimeline, engine } from "animejs";
 import { World } from "./world/World";
 import { heightAt, renderedHeightAt, SEED } from "./world/terrain";
@@ -17,8 +18,22 @@ import {
 } from "./input/FlightInput";
 import { Effects, type EffectsQuality } from "./effects/Effects";
 import type { CollisionWorld } from "./physics/CollisionWorld";
-import { SkyEngine, SUN_ILLUMINANCE, TRANSPARENT_LAYER } from "./sky/SkyEngine";
+import {
+  SkyEngine,
+  SUN_ILLUMINANCE,
+  TRANSPARENT_LAYER,
+  WEATHER,
+  type WeatherName,
+} from "./sky/SkyEngine";
 import { Supersonic } from "./effects/Supersonic";
+import {
+  FLEET,
+  airframe,
+  airframePoint,
+  airframeRatings,
+  airframeScale,
+  type Airframe,
+} from "./aircraft";
 import { CombatSystem, type CombatMission } from "./combat/CombatSystem";
 import { CombatView } from "./combat/CombatView";
 
@@ -28,7 +43,6 @@ interface Save {
   seed: number;
   discovered: string[];
   best: Partial<Record<RouteId, number>>;
-  position?: { x: number; z: number };
   quality: string;
   invert: boolean;
   sensitivity: number;
@@ -37,6 +51,10 @@ interface Save {
   shake?: boolean;
   hudScale?: number;
   controlMode?: "assisted" | "advanced";
+  hours?: number;
+  weather?: WeatherName;
+  ascentBest?: number;
+  aircraft?: string;
 }
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 createUI();
@@ -74,8 +92,13 @@ class Game {
     shake: !reducedMotion,
     hudScale: 1,
     controlMode: "assisted" as "assisted" | "advanced",
+    hours: 17.6,
+    weather: "fair" as WeatherName,
+    aircraft: "sf35",
   };
-  savePosition?: { x: number; z: number };
+  /** Ascent challenge: climb from the sea to 30 km against the clock. */
+  ascent = { active: false, done: false, time: 0, best: undefined as number | undefined };
+  private showcaseTime = 0;
   private last = 0;
   private accumulator = 0;
   private time = 0;
@@ -148,6 +171,12 @@ class Game {
     this.scene.add(this.plane);
     this.scene.add(this.ringGroup);
     this.supersonic = new Supersonic(this.scene, this.plane);
+    // Lightning: bolts and their flash light are part of the scene from the start
+    // so materials compile once with the point light present.
+    const lightning = this.sky.lightning;
+    lightning.groundHeight = (x, z) => heightAt(x, z);
+    lightning.onStrike = (distance, power) => this.audio.thunder(distance, power);
+    this.scene.add(lightning.group, lightning.light);
     this.supersonic.onBoom = (position) => {
       // Sonic boom: shockwave ripple centred on the jet, a jolt and the boom itself.
       this.shock = 1;
@@ -163,6 +192,9 @@ class Game {
     this.loadSave();
     this.setState("menu");
     this.bindUI();
+    this.sky.time.hours = this.settings.hours;
+    this.sky.setWeather(this.settings.weather);
+    this.syncConditions();
     this.mapTerrain.width = this.mapTerrain.height = 108;
     engine.useDefaultMainLoop = false;
     this.renderer.setAnimationLoop((t) => this.frame(t));
@@ -175,34 +207,117 @@ class Game {
     });
     this.loadAircraft();
   }
+  private gltf = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+  private models = new Map<string, Promise<T.Object3D>>();
+  private airframe = FLEET[0];
+  private planeModel?: T.Object3D;
+  private hangarToken = 0;
+  /** Loads (once) and normalises a fleet model into the aircraft frame. */
+  private loadModel(a: Airframe, onProgress?: (fraction: number) => void) {
+    let model = this.models.get(a.id);
+    if (!model) {
+      model = this.gltf
+        .loadAsync(a.file, (e) => onProgress?.(e.total ? e.loaded / e.total : 0.5))
+        .then((gltf) => {
+          const root = gltf.scene;
+          root.rotation.y = -Math.PI / 2;
+          root.scale.setScalar(airframeScale(a));
+          root.traverse((o) => {
+            if (o instanceof T.Mesh) {
+              o.frustumCulled = false;
+              o.castShadow = true;
+              const mats = Array.isArray(o.material) ? o.material : [o.material];
+              for (const mat of mats)
+                if (mat instanceof T.MeshStandardMaterial) {
+                  mat.envMapIntensity = 0.85;
+                  mat.roughness = Math.max(0.6, mat.roughness);
+                }
+            }
+          });
+          return root as T.Object3D;
+        });
+      model.catch(() => this.models.delete(a.id));
+      this.models.set(a.id, model);
+    }
+    return model;
+  }
+  /** Puts an airframe on the player: model, flight performance and engine effects. */
+  private applyAirframe(a: Airframe, model: T.Object3D) {
+    if (this.planeModel) this.plane.remove(this.planeModel);
+    this.planeModel = model;
+    this.plane.add(model);
+    this.airframe = a;
+    Object.assign(this.flight.performance, a.performance);
+    const scale = airframeScale(a);
+    this.supersonic.setAirframe(
+      a.nozzles.map((n) => airframePoint(a, n)),
+      a.nozzleRadius * scale,
+      airframePoint(a, a.tip),
+      a.length,
+    );
+    this.combatView.setAircraftTemplate(model);
+  }
+  private syncHangar() {
+    const a = this.airframe;
+    const index = FLEET.indexOf(a);
+    el("hangar-index").textContent = `${index + 1} / ${FLEET.length}`;
+    el("hangar-name").textContent = a.name;
+    el("hangar-gen").textContent = a.generation;
+    el("hangar-inspired").textContent = `Inspired by the ${a.inspiredBy} · ${a.role}`;
+    const ratings = airframeRatings(a);
+    el("hangar-stats").innerHTML = (["speed", "agility", "climb"] as const)
+      .map(
+        (k) =>
+          `<span>${k.toUpperCase()}</span><span class="bar">${Array.from(
+            { length: 10 },
+            (_, i) => `<i${i < ratings[k] ? ' class="on"' : ""}></i>`,
+          ).join("")}</span>`,
+      )
+      .join("");
+  }
+  /** Hangar: steps through the fleet, loading each model on first view. */
+  private async selectAircraft(step: number) {
+    const index = (FLEET.indexOf(this.airframe) + step + FLEET.length) % FLEET.length;
+    const a = FLEET[index];
+    this.airframe = a;
+    this.settings.aircraft = a.id;
+    this.save();
+    this.syncHangar();
+    const token = ++this.hangarToken;
+    el("hangar").classList.add("loading");
+    try {
+      const model = await this.loadModel(a);
+      if (token !== this.hangarToken) return;
+      await this.renderer.compileAsync(model, this.camera, this.scene);
+      if (token !== this.hangarToken) return;
+      this.applyAirframe(a, model);
+      this.loadAdversaries();
+    } catch {
+      if (token === this.hangarToken)
+        this.toast("That aircraft could not be loaded. Check the connection and try again.", "HANGAR");
+    } finally {
+      if (token === this.hangarToken) el("hangar").classList.remove("loading");
+    }
+  }
+  /** Hostile fighters come from the rest of the fleet (never the player's own type). */
+  private async loadAdversaries() {
+    const ids = ["su57", "j20", "su30", "f22"].filter((id) => id !== this.airframe.id).slice(0, 3);
+    try {
+      const models = await Promise.all(ids.map((id) => this.loadModel(airframe(id))));
+      this.combatView.setEnemyTemplates(models);
+    } catch {
+      // Enemies fall back to the player's model.
+    }
+  }
   private async loadAircraft() {
     try {
-      const gltf = await new GLTFLoader().loadAsync(
-        "/assets/aircraft/stealth-fighter.glb",
-        (e) => {
-          const progress = e.total
-            ? Math.min(95, (e.loaded / e.total) * 95)
-            : 50;
-          el("load-progress").style.width = `${progress}%`;
-        },
-      );
-      const model = gltf.scene;
-      model.rotation.y = -Math.PI / 2;
-      model.scale.setScalar(16 / 1.901339);
-      model.traverse((o) => {
-        if (o instanceof T.Mesh) {
-          o.frustumCulled = false;
-          o.castShadow = true;
-          const mats = Array.isArray(o.material) ? o.material : [o.material];
-          for (const mat of mats)
-            if (mat instanceof T.MeshStandardMaterial) {
-              mat.envMapIntensity = 0.85;
-              mat.roughness = Math.max(0.6, mat.roughness);
-            }
-        }
+      const chosen = airframe(this.settings.aircraft);
+      this.airframe = chosen;
+      this.syncHangar();
+      const model = await this.loadModel(chosen, (fraction) => {
+        el("load-progress").style.width = `${Math.min(95, fraction * 95)}%`;
       });
-      this.plane.add(model);
-      this.combatView.setAircraftTemplate(model);
+      this.applyAirframe(chosen, model);
       await this.physicsReady;
       await this.world.materialsReady;
       if (this.world.materialError)
@@ -212,25 +327,23 @@ class Game {
       await this.renderer.compileAsync(this.scene, this.camera);
       this.loaded = true;
       el<HTMLButtonElement>("start").disabled = false;
-      document
-        .querySelectorAll<HTMLButtonElement>("[data-combat]")
-        .forEach((button) => {
-          button.disabled = false;
-        });
-      el("start-label").textContent = this.savePosition
-        ? "CONTINUE EXPLORING"
-        : "TAKE TO THE SKIES";
+      document.querySelectorAll<HTMLButtonElement>(".mode").forEach((button) => {
+        button.disabled = false;
+      });
+      el("start-label").textContent = "TAKE OFF";
       el("load-progress").style.width = "100%";
-      el("loading-note").textContent = "Aircraft ready. Your world is waiting.";
+      el("loading-note").textContent = "Aircraft ready. The sky is yours.";
       createTimeline({
-        defaults: { duration: reducedMotion ? 1 : 800, ease: "outExpo" },
+        defaults: { duration: reducedMotion ? 1 : 900, ease: "outExpo" },
       })
-        .add(".hero > *", {
+        .add(".title-block > *", {
           opacity: [0, 1],
           translateY: [18, 0],
-          delay: (_, i) => (i ?? 0) * 65,
+          delay: (_, i) => (i ?? 0) * 80,
         })
-        .add(".route-cards", { opacity: [0, 1], translateY: [12, 0] }, 300);
+        .add(".mode-list, .conditions", { opacity: [0, 1], translateY: [12, 0] }, 300);
+      if (this.settings.weather === "storm" && this.state === "menu") this.approachStorm();
+      this.loadAdversaries();
     } catch (error) {
       this.fatal(
         `The aircraft could not be loaded. Check the connection and try again. ${error instanceof Error ? error.message : ""}`,
@@ -306,6 +419,30 @@ class Game {
         button.onclick = () =>
           this.start(undefined, button.dataset.combat as CombatMission);
       });
+    document
+      .querySelectorAll<HTMLButtonElement>("[data-challenge]")
+      .forEach((button) => {
+        button.onclick = () => this.startAscent();
+      });
+    el("hangar-prev").onclick = () => this.selectAircraft(-1);
+    el("hangar-next").onclick = () => this.selectAircraft(1);
+    document.querySelectorAll<HTMLButtonElement>("#time-chips button").forEach((button) => {
+      button.onclick = () => {
+        this.settings.hours = Number(button.dataset.time);
+        this.sky.time.hours = this.settings.hours;
+        this.syncConditions();
+        this.save();
+      };
+    });
+    document.querySelectorAll<HTMLButtonElement>("#weather-chips button").forEach((button) => {
+      button.onclick = () => {
+        this.settings.weather = button.dataset.weather as WeatherName;
+        this.sky.setWeather(this.settings.weather);
+        if (this.settings.weather === "storm" && this.state === "menu") this.approachStorm();
+        this.syncConditions();
+        this.save();
+      };
+    });
     for (const action of Object.keys(defaultBindings) as CombatAction[]) {
       el<HTMLSelectElement>(`bind-${action}`).onchange = (event) => {
         const code = (event.target as HTMLSelectElement).value;
@@ -480,6 +617,10 @@ class Game {
   }
   private start(route?: RouteId, combatMission?: CombatMission) {
     if (!this.loaded) return;
+    const fromShowcase = this.state === "menu" && !route && !combatMission;
+    this.ascent.active = false;
+    this.hud.reset();
+    this.supersonic.clear();
     this.mission.stop();
     this.combat.stop();
     this.combatView.clear();
@@ -495,9 +636,14 @@ class Game {
       this.flight.reset({ x: gate.x, z: gate.z + 700 });
       this.flight.position.y = gate.y;
       this.flight.previous.copy(this.flight.position);
-    } else this.flight.reset(combatMission ? undefined : this.savePosition);
+    } else if (fromShowcase) {
+      // Take off straight out of the title cinematic: same jet, same sky.
+      this.flight.previous.copy(this.flight.position);
+      this.flight.previousQuaternion.copy(this.flight.quaternion);
+      this.flight.crashed = false;
+    } else this.flight.reset();
     if (combatMission) this.combat.start(combatMission, this.flight);
-    this.cameraReady = false;
+    this.cameraReady = fromShowcase;
     this.setState("flight");
     this.targetFollow =
       !!combatMission && this.settings.controlMode === "assisted";
@@ -521,9 +667,125 @@ class Game {
     );
   }
   private restart() {
+    if (this.ascent.active) {
+      this.startAscent();
+      return;
+    }
     const route = this.mission.active;
     const combatMission = this.combat.active;
     this.start(route ?? undefined, combatMission ?? undefined);
+  }
+  /** Ascent: from 600 m over the sea south of Haven to the edge of space. */
+  private startAscent() {
+    if (!this.loaded) return;
+    this.start();
+    this.flight.reset({ x: -900, z: 7000 });
+    this.flight.position.y = 600;
+    this.flight.previous.copy(this.flight.position);
+    this.flight.speed = 240;
+    this.flight.velocity.set(0, 0, -240);
+    this.cameraReady = false;
+    Object.assign(this.ascent, { active: true, done: false, time: 0 });
+    this.updateObjective();
+    this.toast(
+      "Afterburner (Space) and climb. Thin air at altitude means more speed and softer controls.",
+      "ASCENT · REACH 30 000 M",
+    );
+  }
+  /** Title-screen showcase: a lazy S-curve between cumulus tops, sun off the front-left. */
+  private showcase(dt: number) {
+    this.showcaseTime += dt;
+    const t = this.showcaseTime;
+    const speed = 205;
+    const sun = this.sky.time.sun;
+    const sunHeading = Math.atan2(-sun.x, -sun.z);
+    // By day the sun sits behind the camera's right shoulder and rakes across
+    // the jet and the cumulus; in twilight the camera turns into the afterglow.
+    const angle =
+      this.showcaseSunAngle ??
+      T.MathUtils.lerp(-1.13, 1.1, T.MathUtils.smoothstep(sun.y, -0.02, 0.1));
+    const yaw = sunHeading + angle + Math.sin(t * 0.045) * 0.3;
+    const turnRate = Math.cos(t * 0.045) * 0.3 * 0.045;
+    const f = this.flight;
+    if (!this.showcaseStarted) {
+      f.position.set(-2000, 2450, 3000);
+      this.showcaseStarted = true;
+    }
+    const dx = -Math.sin(yaw),
+      dz = -Math.cos(yaw);
+    f.position.x += dx * speed * dt;
+    f.position.z += dz * speed * dt;
+    // Under a storm the showcase drops beneath the cloud base, among the rain shafts.
+    const cruise = this.sky.weather === "storm" ? 800 : 2450;
+    const clearance = Math.max(0, heightAt(f.position.x, f.position.z)) + 320;
+    this.showcaseAltitude = T.MathUtils.damp(
+      this.showcaseAltitude || cruise,
+      Math.max(cruise, clearance),
+      0.6,
+      dt,
+    );
+    f.position.y = this.showcaseAltitude + Math.sin(t * 0.11) * (cruise < 1000 ? 60 : 160);
+    f.previous.copy(f.position);
+    // Coordinated bank for the current turn rate (positive yaw rate turns left).
+    const bank = Math.atan((speed * turnRate) / 9.81) * 2.5;
+    this.showcaseEuler.set(Math.sin(t * 0.11) * 0.03, yaw, bank, "YXZ");
+    f.quaternion.setFromEuler(this.showcaseEuler);
+    f.previousQuaternion.copy(f.quaternion);
+    f.velocity.set(dx * speed, 0, dz * speed);
+    f.speed = speed;
+    f.yaw = yaw;
+    f.roll = bank;
+    f.pitch = this.showcaseEuler.x;
+  }
+  private showcaseStarted = false;
+  /**
+   * Title screen in a storm: move the showcase to just short of the nearest
+   * cumulonimbus core so the jet flies in beneath it, and let it discharge soon.
+   */
+  private approachStorm() {
+    const f = this.flight;
+    const clouds = this.sky.clouds;
+    let best: { x: number; z: number } | undefined;
+    for (let r = 2000; r <= 60000 && !best; r += 2000)
+      for (let k = 0, n = Math.ceil((2 * Math.PI * r) / 2000); k < n; k++) {
+        const a = (k / n) * Math.PI * 2;
+        const x = f.position.x + Math.cos(a) * r,
+          z = f.position.z + Math.sin(a) * r;
+        if (clouds.weatherAt(x, z).type > 0.75) {
+          best = { x, z };
+          break;
+        }
+      }
+    if (!best) return;
+    const heading = Math.atan2(f.velocity.x, f.velocity.z);
+    f.position.x = best.x - Math.sin(heading) * 3500;
+    f.position.z = best.z - Math.cos(heading) * 3500;
+    f.previous.copy(f.position);
+    this.showcaseStarted = true;
+    this.showcaseAltitude = 800;
+    this.sky.clouds.invalidate();
+    this.sky.lightning.soon(1.5);
+    this.cameraReady = false;
+  }
+  private showcaseAltitude = 0;
+  /** Optional fixed showcase heading relative to the sun (radians, positive = sun on the right). */
+  showcaseSunAngle?: number;
+  private showcaseEuler = new T.Euler();
+  private menuYaw = new T.Quaternion();
+  private menuAxis = new T.Vector3(0, 1, 0);
+  private formatTime(seconds: number) {
+    const m = Math.floor(seconds / 60),
+      sec = seconds - m * 60;
+    return `${m}:${sec.toFixed(1).padStart(4, "0")}`;
+  }
+  private syncConditions() {
+    el("ascent-best").textContent = this.ascent.best ? this.formatTime(this.ascent.best) : "NEW";
+    document.querySelectorAll<HTMLButtonElement>("#time-chips button").forEach((b) => {
+      b.setAttribute("aria-pressed", String(Math.abs(Number(b.dataset.time) - this.settings.hours) < 0.01));
+    });
+    document.querySelectorAll<HTMLButtonElement>("#weather-chips button").forEach((b) => {
+      b.setAttribute("aria-pressed", String(b.dataset.weather === this.settings.weather));
+    });
   }
   private resume() {
     this.last = 0;
@@ -540,13 +802,11 @@ class Game {
     this.combat.stop();
     this.combatView.clear();
     this.effects.clear();
-    this.flight.reset();
+    this.ascent.active = false;
+    this.supersonic.clear();
     this.cameraReady = false;
     this.setState("menu");
     this.buildRings();
-    el("start-label").textContent = this.savePosition
-      ? "CONTINUE EXPLORING"
-      : "TAKE TO THE SKIES";
     this.updateDiscovery();
   }
   private input() {
@@ -748,6 +1008,20 @@ class Game {
           this.save();
         }
     }
+    if (this.state === "menu") this.showcase(dt);
+    if (this.state === "flight" && this.ascent.active && !this.ascent.done) {
+      this.ascent.time += dt;
+      if (this.flight.position.y >= 30000) {
+        this.ascent.done = true;
+        const best = this.ascent.best;
+        if (!best || this.ascent.time < best) this.ascent.best = this.ascent.time;
+        this.toast(
+          `Edge of space in ${this.formatTime(this.ascent.time)}${best && this.ascent.time >= best ? ` · best ${this.formatTime(best)}` : " · new record"}`,
+          "ASCENT COMPLETE",
+        );
+        this.save();
+      }
+    }
     this.sky.update(this.state === "flight" || this.state === "menu" ? dt : 0);
     this.world.lightDirection.copy(this.sky.lightDirection);
     const oldOrigin = this.world.origin.clone();
@@ -878,14 +1152,19 @@ class Game {
       return;
     }
     if (this.state === "menu") {
+      // Slow cinematic orbit in the jet's heading frame; the jet sits right of
+      // centre so the title has the left of the frame.
+      const t = this.showcaseTime;
+      this.menuYaw.setFromAxisAngle(this.menuAxis, this.flight.yaw);
       this.offset
-        .set(-31 + Math.sin(this.time * 0.07) * 7, 15, 39)
+        .set(30 + Math.sin(t * 0.07) * 9, 4 + Math.sin(t * 0.045) * 4, 26 + Math.cos(t * 0.055) * 10)
+        .applyQuaternion(this.menuYaw)
         .add(this.local);
-      this.look.copy(this.local).add(new T.Vector3(-13, 1, -5));
+      this.look.set(-12, 2, -10).applyQuaternion(this.menuYaw).add(this.local);
       this.camera.position.copy(this.offset);
       this.camera.up.set(0, 1, 0);
       this.camera.lookAt(this.look);
-      this.camera.fov = 49;
+      this.camera.fov = 44;
     } else {
       this.forward.set(0, 0, -1).applyQuaternion(this.rotation);
       const blend = this.cameraBlend.value;
@@ -1063,7 +1342,9 @@ class Game {
       time: this.time,
       mode: this.combat.active
         ? `A-A  ${status.missiles} MSL  ${status.gunAmmo} GUN  ${status.flares} FLR`
-        : this.mission.active
+        : this.ascent.active
+          ? `ASCENT  ${this.formatTime(this.ascent.time)}  ${Math.round(Math.min(100, (this.flight.position.y / 30000) * 100))}%`
+          : this.mission.active
           ? `NAV  GATE ${Math.min(this.mission.index + 1, routes[this.mission.active].points.length)}/${routes[this.mission.active].points.length}`
           : "NAV",
       warning: this.warningText,
@@ -1090,6 +1371,18 @@ class Game {
   }
   private updateObjective() {
     const objective = el("objective");
+    if (this.ascent.active) {
+      objective.querySelector(".eyebrow")!.textContent = this.ascent.done
+        ? "ASCENT COMPLETE"
+        : "ASCENT CHALLENGE";
+      objective.querySelector("strong")!.textContent = this.ascent.done
+        ? `Edge of space · ${this.formatTime(this.ascent.time)}`
+        : "Climb to 30 000 m.";
+      objective.querySelector("p")!.textContent = this.ascent.done
+        ? "Look down: the whole archipelago. R to fly it again."
+        : `${Math.round(this.flight.position.y).toLocaleString("en-US")} m · Mach ${this.flight.mach.toFixed(2)} · ${this.formatTime(this.ascent.time)}${this.ascent.best ? ` · best ${this.formatTime(this.ascent.best)}` : ""}`;
+      return;
+    }
     if (this.combat.active) {
       const status = this.combat.status;
       objective.querySelector(".eyebrow")!.textContent = this.combat.completed
@@ -1348,14 +1641,10 @@ class Game {
       for (const id of ["skyline", "coast"] as RouteId[])
         if (Number.isFinite(s.best?.[id]) && s.best[id]! > 0)
           this.mission.best[id] = s.best[id];
-      if (
-        s.position &&
-        Number.isFinite(s.position.x) &&
-        Number.isFinite(s.position.z) &&
-        Math.abs(s.position.x) < 1e9 &&
-        Math.abs(s.position.z) < 1e9
-      )
-        this.savePosition = s.position;
+      if (Number.isFinite(s.hours)) this.settings.hours = ((s.hours! % 24) + 24) % 24;
+      if (s.weather && s.weather in WEATHER) this.settings.weather = s.weather;
+      if (Number.isFinite(s.ascentBest) && s.ascentBest! > 0) this.ascent.best = s.ascentBest;
+      if (s.aircraft && FLEET.some((a) => a.id === s.aircraft)) this.settings.aircraft = s.aircraft;
       this.settings.quality = ["low", "medium", "high"].includes(s.quality)
         ? s.quality
         : "medium";
@@ -1388,17 +1677,12 @@ class Game {
   }
   private save() {
     try {
-      if (this.state !== "menu" && !this.flight.crashed)
-        this.savePosition = {
-          x: this.flight.position.x,
-          z: this.flight.position.z,
-        };
       const data: Save = {
         version: 1,
         seed: SEED,
         discovered: [...this.mission.discovered],
         best: this.mission.best,
-        position: this.savePosition,
+        ascentBest: this.ascent.best,
         ...this.settings,
         audio: this.audio.enabled,
         bindings: this.inputActions.bindings,

@@ -278,10 +278,19 @@ export class Supersonic {
     uAmbient: { value: new T.Color() },
   };
   private cone: T.Mesh<T.LatheGeometry, T.ShaderMaterial>;
-  private plume: T.Mesh<T.CylinderGeometry, T.ShaderMaterial>;
-  private core: T.Mesh<T.CylinderGeometry, T.ShaderMaterial>;
-  private contrail: Ribbon;
+  private plumeMaterial: T.ShaderMaterial;
+  private coreMaterial: T.ShaderMaterial;
+  private plumeGeometry: T.CylinderGeometry;
+  private coreGeometry: T.CylinderGeometry;
+  /** One outer plume and hot core per engine nozzle. */
+  private engines: { plume: T.Mesh; core: T.Mesh; nozzle: T.Vector3 }[] = [];
+  private contrailMaterial: T.ShaderMaterial;
+  private contrails: Ribbon[] = [];
   private tips: Ribbon[];
+  /** Airframe geometry in the aircraft's local frame (metres, +Z aft). */
+  private nozzleRadius = 0.6;
+  private tipPosition = new T.Vector3(5.3, 0.05, 3.6);
+  private size = 1;
   private booms: Boom[] = [];
   private boomGeometry = new T.SphereGeometry(1, 48, 24);
   private boomMaterial: T.ShaderMaterial;
@@ -292,7 +301,10 @@ export class Supersonic {
   private nozzle = new T.Vector3();
   /** Fired once each time the jet goes supersonic (for audio, shake and post FX). */
   onBoom?: (position: T.Vector3) => void;
-  constructor(scene: T.Scene, private plane: T.Object3D) {
+  constructor(
+    scene: T.Scene,
+    private plane: T.Object3D,
+  ) {
     // Bell-shaped condensation shell: feathery front at the canopy, crisp aft shock edge.
     const profile = [
       [0.6, -5.2],
@@ -390,13 +402,10 @@ export class Supersonic {
       g.rotateX(-Math.PI / 2);
       return g;
     };
-    this.plume = new T.Mesh(cylinder(0.6, 0.18), plumeMaterial(false));
-    this.core = new T.Mesh(cylinder(0.32, 0.05), plumeMaterial(true));
-    for (const m of [this.plume, this.core]) {
-      m.layers.set(TRANSPARENT_LAYER);
-      m.frustumCulled = false;
-      plane.add(m);
-    }
+    this.plumeGeometry = cylinder(0.6, 0.18);
+    this.coreGeometry = cylinder(0.32, 0.05);
+    this.plumeMaterial = plumeMaterial(false);
+    this.coreMaterial = plumeMaterial(true);
 
     this.boomMaterial = vapourMaterial(
       /* glsl */ `
@@ -416,12 +425,46 @@ export class Supersonic {
       { ...this.lighting, uFade: { value: 1 } },
     );
 
-    this.contrail = new Ribbon(700, 35, 55, ribbonMaterial(1.6, 3.2, 55, 0.55, this.lighting));
+    this.contrailMaterial = ribbonMaterial(1.6, 3.2, 55, 0.55, this.lighting);
     this.tips = [0, 1].map(
       () => new Ribbon(220, 2.5, 1.6, ribbonMaterial(0.35, 1.4, 1.6, 0.5, this.lighting)),
     );
-    for (const ribbon of [this.contrail, ...this.tips]) this.group.add(ribbon.mesh);
+    for (const ribbon of this.tips) this.group.add(ribbon.mesh);
     scene.add(this.group);
+    this.setAirframe([new T.Vector3(0, 0.1, 8)], 0.6, new T.Vector3(5.3, 0.05, 3.6), 16);
+  }
+  /**
+   * Places afterburner plumes and contrails at each nozzle exit and the
+   * vortex trails at the wingtips (aircraft frame, metres, +Z aft).
+   */
+  setAirframe(nozzles: T.Vector3[], nozzleRadius: number, tip: T.Vector3, length: number) {
+    for (const e of this.engines) {
+      e.plume.removeFromParent();
+      e.core.removeFromParent();
+    }
+    this.engines = nozzles.map((nozzle) => {
+      const plume = new T.Mesh(this.plumeGeometry, this.plumeMaterial);
+      const core = new T.Mesh(this.coreGeometry, this.coreMaterial);
+      for (const m of [plume, core]) {
+        m.layers.set(TRANSPARENT_LAYER);
+        m.frustumCulled = false;
+        this.plane.add(m);
+      }
+      return { plume, core, nozzle: nozzle.clone() };
+    });
+    for (const r of this.contrails) {
+      this.group.remove(r.mesh);
+      r.dispose();
+    }
+    this.contrails = nozzles.slice(0, 2).map(() => {
+      const ribbon = new Ribbon(700, 35, 55, this.contrailMaterial);
+      this.group.add(ribbon.mesh);
+      return ribbon;
+    });
+    this.nozzleRadius = nozzleRadius;
+    this.tipPosition.copy(tip);
+    this.size = length / 16;
+    for (const r of this.tips) r.clear();
   }
   /** Lighting from the sky engine: sun direction/colour (pre-multiplied by illuminance) and ambient. */
   setLighting(sun: T.Vector3, sunColor: T.Color, ambient: T.Color) {
@@ -464,39 +507,58 @@ export class Supersonic {
     cone.uTime.value = this.time;
     this.cone.visible = cone.uIntensity.value > 0.01;
     // The shock (aft edge) moves aft as Mach rises.
-    this.cone.position.set(0, 0.4, T.MathUtils.lerp(-0.5, 2.5, T.MathUtils.clamp((mach - 0.92) / 0.18, 0, 1)));
-    const breathe = 1 + 0.04 * Math.sin(this.time * 23) + this.onset * 0.15;
-    this.cone.scale.set(breathe, breathe, 1);
+    const size = this.size;
+    this.cone.position.set(
+      0,
+      0.4 * size,
+      T.MathUtils.lerp(-0.5, 2.5, T.MathUtils.clamp((mach - 0.92) / 0.18, 0, 1)) * size,
+    );
+    const breathe = (1 + 0.04 * Math.sin(this.time * 23) + this.onset * 0.15) * size;
+    this.cone.scale.set(breathe, breathe, size);
 
     const boost = state.active && state.boost ? 1 : 0;
     const length = boost ? 9 + Math.sin(this.time * 31) * 0.4 : 2.6 + state.throttle * 1.8;
-    for (const [mesh, scale] of [
-      [this.plume, 1],
-      [this.core, 0.62],
+    // Plume length scales with the nozzle: diamonds stay a fixed number of diameters apart.
+    const width = this.nozzleRadius / 0.6;
+    for (const [material, scale] of [
+      [this.plumeMaterial, 1],
+      [this.coreMaterial, 0.62],
     ] as const) {
-      const u = mesh.material.uniforms;
+      const u = material.uniforms;
       u.uBoost.value = T.MathUtils.damp(u.uBoost.value, boost, 8, dt);
       u.uThrottle.value = state.throttle;
       u.uTime.value = this.time;
       u.uLength.value = length * scale;
       u.uMach.value = 1.15 + 0.35 * u.uBoost.value;
-      mesh.scale.set(1, 1, length * scale);
-      mesh.position.set(0, 0.1, 8.0 + (length * scale) / 2);
-      mesh.visible = state.active;
+    }
+    for (const e of this.engines) {
+      for (const [mesh, scale] of [
+        [e.plume, 1],
+        [e.core, 0.62],
+      ] as const) {
+        const l = length * scale * width;
+        mesh.scale.set(width, width, l);
+        mesh.position.set(e.nozzle.x, e.nozzle.y, e.nozzle.z + l / 2);
+        mesh.visible = state.active;
+      }
     }
 
-    // Persistent contrails above ~8.5 km, from the nozzle.
-    this.nozzle.set(0, 0.1, 9.5).applyQuaternion(state.quaternion).add(state.position);
+    // Persistent contrails above ~8.5 km, from each engine.
     const contrailStrength = state.active ? T.MathUtils.smoothstep(altitude, 8000, 9500) : 0;
-    this.contrail.emit(this.nozzle.x, this.nozzle.y, this.nozzle.z, this.time, contrailStrength);
-    this.contrail.upload(origin, this.time, this.nozzle.x, this.nozzle.y, this.nozzle.z, contrailStrength);
+    this.contrails.forEach((ribbon, i) => {
+      const n = this.engines[i].nozzle;
+      this.nozzle.set(n.x, n.y, n.z + 1.5).applyQuaternion(state.quaternion).add(state.position);
+      ribbon.emit(this.nozzle.x, this.nozzle.y, this.nozzle.z, this.time, contrailStrength);
+      ribbon.upload(origin, this.time, this.nozzle.x, this.nozzle.y, this.nozzle.z, contrailStrength);
+    });
 
     // Wingtip vortices in hard pulls, strongest in humid low air.
     const vortex = state.active
       ? T.MathUtils.smoothstep(state.gLoad, 3.2, 6) * (0.35 + 0.65 * humid)
       : 0;
     this.tips.forEach((ribbon, i) => {
-      this.local.set(i === 0 ? -5.3 : 5.3, 0.05, 3.6).applyQuaternion(state.quaternion).add(state.position);
+      const tip = this.tipPosition;
+      this.local.set(i === 0 ? -tip.x : tip.x, tip.y, tip.z).applyQuaternion(state.quaternion).add(state.position);
       ribbon.emit(this.local.x, this.local.y, this.local.z, this.time, vortex);
       ribbon.upload(origin, this.time, this.local.x, this.local.y, this.local.z, vortex);
     });
@@ -528,7 +590,7 @@ export class Supersonic {
     this.booms.push({ mesh, age: 0, global: position.clone() });
   }
   clear() {
-    this.contrail.clear();
+    for (const r of this.contrails) r.clear();
     for (const r of this.tips) r.clear();
     for (const b of this.booms) {
       b.mesh.removeFromParent();
@@ -542,12 +604,18 @@ export class Supersonic {
   dispose() {
     this.clear();
     this.group.removeFromParent();
-    for (const m of [this.cone, this.plume, this.core]) {
-      m.removeFromParent();
-      m.geometry.dispose();
-      m.material.dispose();
+    this.cone.removeFromParent();
+    this.cone.geometry.dispose();
+    this.cone.material.dispose();
+    for (const e of this.engines) {
+      e.plume.removeFromParent();
+      e.core.removeFromParent();
     }
-    for (const r of [this.contrail, ...this.tips]) {
+    for (const m of [this.plumeGeometry, this.coreGeometry, this.plumeMaterial, this.coreMaterial])
+      m.dispose();
+    for (const r of this.contrails) r.dispose();
+    this.contrailMaterial.dispose();
+    for (const r of this.tips) {
       r.dispose();
       (r.mesh.material as T.Material).dispose();
     }

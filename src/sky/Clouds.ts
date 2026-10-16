@@ -122,6 +122,7 @@ export class Clouds {
           uMaxDistance: { value: 160000 },
           uLightning: { value: 0 },
           uLightningPos: { value: this.lightning.position },
+          uRain: { value: 0 },
         },
       }),
     );
@@ -195,10 +196,58 @@ export class Clouds {
     }
     const weather = new FullscreenPass(passMaterial({ fragmentShader: WEATHER_NOISE }));
     weather.render(renderer, this.weather);
+    // CPU copy of the weather map: lightning and rain find their storm cells here.
+    this.weatherData = new Uint8Array(512 * 512 * 4);
+    renderer.readRenderTargetPixels(this.weather, 0, 0, 512, 512, this.weatherData);
     shape.dispose();
     detail.dispose();
     weather.dispose();
     this.generated = true;
+  }
+  private weatherData?: Uint8Array;
+  /** Bilinear, repeating lookup of one weather-map channel (0..1), as the shader samples it. */
+  private weatherSample(u: number, v: number, channel: number) {
+    const data = this.weatherData!;
+    const x = u * 512 - 0.5,
+      y = v * 512 - 0.5;
+    const x0 = Math.floor(x),
+      y0 = Math.floor(y);
+    const fx = x - x0,
+      fy = y - y0;
+    const at = (i: number, j: number) =>
+      data[((((j % 512) + 512) % 512) * 512 + (((i % 512) + 512) % 512)) * 4 + channel];
+    const top = at(x0, y0) * (1 - fx) + at(x0 + 1, y0) * fx;
+    const bottom = at(x0, y0 + 1) * (1 - fx) + at(x0 + 1, y0 + 1) * fx;
+    return (top * (1 - fy) + bottom * fy) / 255;
+  }
+  /**
+   * CPU mirror of the shader's cloudWeather(): coverage and convective type
+   * (0 fair-weather cumulus … 1 cumulonimbus) at a global position.
+   */
+  weatherAt(x: number, z: number) {
+    if (!this.weatherData) return { coverage: 0, type: 0 };
+    const { coverage: cov, storm: stormScale } = this.weatherState;
+    const ox = this.windOffset.x,
+      oz = this.windOffset.y;
+    const systems = this.weatherSample((x + ox) / 96000, (z + oz) / 96000, 0);
+    const big = this.weatherSample((x + ox) / 96000, (z + oz) / 96000, 2);
+    const u = (x + ox * 1.15) / 34000 + 0.31,
+      v = (z + oz * 1.15) / 34000 + 0.77;
+    const local = this.weatherSample(u, v, 1) * 0.85 + this.weatherSample(u, v, 3) * 0.15;
+    const storm =
+      T.MathUtils.smoothstep(big, 0.8 - 0.4 * stormScale, 0.95 - 0.35 * stormScale) * stormScale;
+    const threshold = 0.92 - cov * 0.62 + (0.5 - systems) * 0.38 - storm * 0.3;
+    const coverage = Math.min(
+      1,
+      T.MathUtils.smoothstep(local, threshold, threshold + 0.22) * 0.56 + storm * 0.2,
+    );
+    const core = T.MathUtils.smoothstep(local, threshold + 0.1, threshold + 0.35);
+    const type = Math.min(
+      1,
+      core * (0.2 + 0.5 * cov) * T.MathUtils.smoothstep(systems, 0.4, 0.8) +
+        storm * 0.95 * T.MathUtils.smoothstep(local, threshold, threshold + 0.3),
+    );
+    return { coverage, type };
   }
   /** Advances wind and weather uniforms; call once per frame before render(). */
   step(dt: number) {
@@ -245,6 +294,7 @@ export class Clouds {
       march.uFrame.value = this.frame;
       march.uMaxSteps.value = SETTINGS[this.quality].steps;
       march.uLightning.value = this.lightning.intensity;
+      march.uRain.value = this.weatherState.storm;
       this.marchPass.render(renderer, this.march);
 
       const read = this.history[this.current],

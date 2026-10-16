@@ -27,6 +27,7 @@ uniform float uTime;
 uniform float uAerialRange;
 uniform float uOceanDetail;
 uniform float uPixelAngle;
+uniform vec4 uFlash; // lightning point light: position relative to the camera (m), intensity (cd)
 in vec2 vUv;
 layout(location = 0) out vec4 outColor;
 
@@ -102,7 +103,8 @@ vec3 starField(vec3 rd) {
       vec3 dir = vec3(cos(phi) * sqrt(1.0 - y * y), y, sin(phi) * sqrt(1.0 - y * y));
       // Chord length: acos() near 1.0 quantizes to whole-pixel blocks in float32.
       float ang = length(dir - rd);
-      float brightness = pow(h, layer == 0 ? 18.0 : 40.0) * (layer == 0 ? 6.0 : 2.5);
+      // Few bright stars, many faint ones (tuned for the night exposure ceiling).
+      float brightness = pow(h, layer == 0 ? 40.0 : 70.0) * (layer == 0 ? 0.07 : 0.03);
       float spread = uPixelAngle * 0.9;
       float glow = exp(-ang * ang / (spread * spread));
       float twinkle = 0.75 + 0.25 * sin(uTime * (2.0 + h * 9.0) + h * 40.0);
@@ -115,7 +117,7 @@ vec3 starField(vec3 rd) {
   float band = exp(-pow(dot(rd, galactic), 2.0) * 14.0);
   vec2 g = vec2(atan(rd.z, rd.x), asin(clamp(rd.y, -1.0, 1.0))) * 6.0;
   float dust = valueNoise(g * 2.0) * 0.6 + valueNoise(g * 5.0) * 0.4;
-  col += vec3(0.55, 0.6, 0.75) * band * (0.25 + dust * 0.75) * 0.06 * smoothstep(0.15, 0.6, dust + band * 0.3);
+  col += vec3(0.55, 0.6, 0.75) * band * (0.25 + dust * 0.75) * 0.006 * smoothstep(0.15, 0.6, dust + band * 0.3);
   return col;
 }
 
@@ -265,6 +267,12 @@ void main() {
     float shade = texture(tCloudShadow, clamp(suv, 0.0, 1.0)).r;
     float inside = 1.0 - smoothstep(0.38, 0.5, max(abs(suv.x - 0.5), abs(suv.y - 0.5)));
     water *= mix(1.0, 0.35 + 0.65 * shade, inside);
+    if (uFlash.w > 0.0) {
+      // Lightning over the sea: diffuse sheen from the flash above the cloud base.
+      vec3 toFlash = uFlash.xyz - rd * tOcean;
+      float d2 = dot(toFlash, toFlash);
+      water += vec3(0.75, 0.82, 1.0) * uFlash.w / d2 * max(toFlash.y, 0.0) * inversesqrt(d2) * 0.012;
+    }
     surfacePerspective(uv, rd, tOcean, true, inscatter, trans);
     color = water * trans + inscatter * uSunIlluminance;
     vec4 clip = uProjection * vec4((uViewRotation * vec4(rd * min(tOcean, 1e7), 0.0)).xyz, 1.0);
