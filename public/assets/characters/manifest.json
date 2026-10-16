@@ -1,0 +1,159 @@
+{
+  "version": 1,
+  "units": "metres",
+  "conventions": {
+    "up": "+Y",
+    "facing": "+Z",
+    "origin": "feet centre on the ground (y = 0)",
+    "height": 1.78,
+    "skeleton": "Meshy 24-joint biped, identical joint names on every character; bones are authored in centimetres under an Armature node scaled 0.01",
+    "clips": "Armature + bone nodes + one animation per file, no mesh or textures. Rotation tracks for every animated bone, translation track for Hips only. Bind by node name (three.js AnimationMixer on the character root). Hips translation is in rig units (centimetres, hip height about 100)."
+  },
+  "bones": [
+    "Hips",
+    "Spine02",
+    "Spine01",
+    "Spine",
+    "neck",
+    "Head",
+    "head_end",
+    "headfront",
+    "LeftShoulder",
+    "LeftArm",
+    "LeftForeArm",
+    "LeftHand",
+    "RightShoulder",
+    "RightArm",
+    "RightForeArm",
+    "RightHand",
+    "LeftUpLeg",
+    "LeftLeg",
+    "LeftFoot",
+    "LeftToeBase",
+    "RightUpLeg",
+    "RightLeg",
+    "RightFoot",
+    "RightToeBase"
+  ],
+  "characters": [
+    {
+      "id": "soldier",
+      "file": "soldier.glb",
+      "height": 1.78,
+      "facing": "+Z",
+      "triangles": 13995,
+      "bytes": 1365420,
+      "description": "Modern infantry soldier, olive fatigues, plate carrier, gloves and boots (no helmet in the generated take)"
+    },
+    {
+      "id": "trooper",
+      "file": "trooper.glb",
+      "height": 1.78,
+      "facing": "+Z",
+      "triangles": 13992,
+      "bytes": 1614732,
+      "description": "Special forces operator, black tactical gear, full-face gas mask, ballistic helmet, tactical vest"
+    },
+    {
+      "id": "instructor",
+      "file": "instructor.glb",
+      "height": 1.78,
+      "facing": "+Z",
+      "triangles": 13999,
+      "bytes": 1355480,
+      "description": "Drill instructor, olive t-shirt/shirt, camouflage trousers, boots, beret-style cap"
+    }
+  ],
+  "clips": [
+    {
+      "name": "idle",
+      "file": "clips/idle.glb",
+      "loop": true,
+      "duration": 4.033,
+      "madeOn": "soldier",
+      "source": "Idle (0)",
+      "bytes": 60836
+    },
+    {
+      "name": "alert",
+      "file": "clips/alert.glb",
+      "loop": true,
+      "duration": 4.033,
+      "madeOn": "soldier",
+      "source": "Alert (2)",
+      "bytes": 53544
+    },
+    {
+      "name": "dead",
+      "file": "clips/dead.glb",
+      "loop": false,
+      "duration": 3,
+      "madeOn": "soldier",
+      "source": "Dead (8)",
+      "bytes": 44276
+    },
+    {
+      "name": "agree-gesture",
+      "file": "clips/agree-gesture.glb",
+      "loop": false,
+      "duration": 13.033,
+      "madeOn": "soldier",
+      "source": "Agree Gesture (25)",
+      "bytes": 165192
+    },
+    {
+      "name": "boxing-practice",
+      "file": "clips/boxing-practice.glb",
+      "loop": true,
+      "duration": 6.867,
+      "madeOn": "soldier",
+      "source": "Boxing Practice (87)",
+      "bytes": 85616
+    },
+    {
+      "name": "jumping-jacks",
+      "file": "clips/jumping-jacks.glb",
+      "loop": true,
+      "duration": 1.133,
+      "madeOn": "soldier",
+      "source": "Jumping Jacks (326)",
+      "bytes": 22528
+    },
+    {
+      "name": "dying-backwards",
+      "file": "clips/dying-backwards.glb",
+      "loop": false,
+      "duration": 2.233,
+      "madeOn": "soldier",
+      "source": "Dying Backwards (189)",
+      "bytes": 36304
+    },
+    {
+      "name": "talk-passionately",
+      "file": "clips/talk-passionately.glb",
+      "loop": true,
+      "duration": 10.3,
+      "madeOn": "soldier",
+      "source": "Talk Passionately (308)",
+      "bytes": 99160
+    },
+    {
+      "name": "walk",
+      "file": "clips/walk.glb",
+      "loop": true,
+      "duration": 1.067,
+      "madeOn": "soldier",
+      "source": "Walking (rigging bundle)",
+      "bytes": 21120
+    },
+    {
+      "name": "run",
+      "file": "clips/run.glb",
+      "loop": true,
+      "duration": 0.667,
+      "madeOn": "soldier",
+      "source": "Running (rigging bundle)",
+      "bytes": 16580
+    }
+  ]
+}
