@@ -277,9 +277,13 @@ vec4 clipAabb(vec4 h, vec4 mn, vec4 mx) {
 void main() {
   ivec2 p = ivec2(gl_FragCoord.xy);
   ivec2 lowSize = textureSize(tCurrent, 0);
-  ivec2 lo = min(p / 2, lowSize - 1);
-  bool fresh = all(equal(p - lo * 2, ivec2(uOffset)));
-  vec4 current = texelFetch(tCurrent, lo, 0);
+  // March texel i traced resolve pixel 2i + offset: map this pixel into march space.
+  vec2 marchCoord = (vec2(p) - uOffset) * 0.5;
+  ivec2 lo = clamp(ivec2(floor(marchCoord + 0.5)), ivec2(0), lowSize - 1);
+  bool fresh = all(equal(p, lo * 2 + ivec2(uOffset)));
+  vec4 exact = texelFetch(tCurrent, lo, 0);
+  vec4 smoothCurrent = texture(tCurrent, (marchCoord + 0.5) / vec2(lowSize));
+  vec4 current = fresh ? exact : smoothCurrent;
   vec4 depthInfo = texelFetch(tCurrentDepth, lo, 0);
   vec2 uv = (vec2(p) + 0.5) / uResolution;
   vec4 ray = uRayMatrix * vec4(uv * 2.0 - 1.0, 1.0, 1.0);
@@ -299,17 +303,17 @@ void main() {
   bool valid = uReset < 0.5 && clip.w > 0.0 && all(greaterThanEqual(previous, vec2(0.0))) &&
     all(lessThanEqual(previous, vec2(1.0)));
   if (!valid) {
-    outColor = current;
+    outColor = smoothCurrent;
     outDepth = depthInfo;
     return;
   }
   vec4 history = texture(tHistory, previous);
   float limitPrev = texture(tHistoryDepth, previous).y;
   float occlusionChange = abs(limitPrev - depthInfo.y) / max(min(limitPrev, depthInfo.y), 0.01);
-  history = clipAabb(history, mean - sd * 1.6, mean + sd * 1.6);
-  float blend = fresh ? 0.35 : 0.0;
-  blend = max(blend, clamp(occlusionChange * 2.0, 0.0, 1.0) * (fresh ? 1.0 : 0.6));
-  outColor = mix(history, fresh ? current : mean, blend);
+  history = clipAabb(history, mean - sd * 1.8, mean + sd * 1.8);
+  float blend = fresh ? 0.3 : 0.06;
+  blend = max(blend, clamp(occlusionChange * 2.0, 0.0, 1.0) * 0.8);
+  outColor = mix(history, current, blend);
   outDepth = depthInfo;
 }`;
 

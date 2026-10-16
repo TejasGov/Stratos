@@ -83,8 +83,13 @@ export class Clouds {
   readonly windOffset = new T.Vector2();
   readonly shapeOffset = new T.Vector3();
   readonly lightning = { intensity: 0, position: new T.Vector3() };
+  /** Trace/resolve rounds per frame (1 in flight; more for converged stills). */
+  converge = 1;
   private density: Record<string, T.IUniform>;
   constructor(atmosphere: Atmosphere, private depth: T.DepthTexture) {
+    // Colour is reconstructed bilinearly between traced texels; depth stays nearest.
+    const marchColor = this.march.textures[0];
+    marchColor.minFilter = marchColor.magFilter = T.LinearFilter;
     const cameraWorld = new T.Vector3();
     this.density = {
       tWeather: { value: this.weather.texture },
@@ -227,29 +232,40 @@ export class Clouds {
 
     this.rotation.extractRotation(camera.matrixWorld);
     this.rayMatrix.copy(this.rotation).multiply(camera.projectionMatrixInverse);
-    const [ox, oy] = BAYER[this.frame % 4];
-    const march = this.marchPass.material.uniforms;
-    march.uProjectionInverse.value.copy(camera.projectionMatrixInverse);
-    march.uResolveSize.value.set(this.width, this.height);
-    march.uOffset.value.set(ox, oy);
-    march.uSunIlluminance.value = sunIlluminance;
-    march.uFrame.value = this.frame;
-    march.uMaxSteps.value = SETTINGS[this.quality].steps;
-    march.uLightning.value = this.lightning.intensity;
-    this.marchPass.render(renderer, this.march);
+    // Several trace/resolve rounds per frame converge the checkerboard instantly
+    // (photo mode and stills); gameplay uses one round per frame.
+    for (let round = 0; round < Math.max(1, this.converge); round++) {
+      if (round > 0) this.frame = (this.frame + 1) % 4096;
+      const [ox, oy] = BAYER[this.frame % 4];
+      const march = this.marchPass.material.uniforms;
+      march.uProjectionInverse.value.copy(camera.projectionMatrixInverse);
+      march.uResolveSize.value.set(this.width, this.height);
+      march.uOffset.value.set(ox, oy);
+      march.uSunIlluminance.value = sunIlluminance;
+      march.uFrame.value = this.frame;
+      march.uMaxSteps.value = SETTINGS[this.quality].steps;
+      march.uLightning.value = this.lightning.intensity;
+      this.marchPass.render(renderer, this.march);
 
-    const read = this.history[this.current],
-      write = this.history[1 - this.current];
-    const resolve = this.resolvePass.material.uniforms;
-    resolve.tHistory.value = read.textures[0];
-    resolve.tHistoryDepth.value = read.textures[1];
-    resolve.uResolution.value.set(this.width, this.height);
-    resolve.uOffset.value.set(ox, oy);
-    resolve.uCameraDelta.value.copy(cameraGlobal).sub(this.previousCamera);
-    resolve.uReset.value = this.reset ? 1 : 0;
-    this.resolvePass.render(renderer, write);
-    this.current = 1 - this.current;
-    this.reset = false;
+      const read = this.history[this.current],
+        write = this.history[1 - this.current];
+      const resolve = this.resolvePass.material.uniforms;
+      resolve.tHistory.value = read.textures[0];
+      resolve.tHistoryDepth.value = read.textures[1];
+      resolve.uResolution.value.set(this.width, this.height);
+      resolve.uOffset.value.set(ox, oy);
+      if (round === 0) resolve.uCameraDelta.value.copy(cameraGlobal).sub(this.previousCamera);
+      else resolve.uCameraDelta.value.set(0, 0, 0);
+      resolve.uReset.value = this.reset ? 1 : 0;
+      this.resolvePass.render(renderer, write);
+      this.current = 1 - this.current;
+      this.reset = false;
+      if (round === 0) {
+        // Later rounds reproject with this frame's own matrices.
+        this.viewRotation.copy(this.rotation).invert();
+        this.previousViewProjection.copy(camera.projectionMatrix).multiply(this.viewRotation);
+      }
+    }
 
     // Store this frame's rotation-only view-projection for next frame's reprojection.
     this.viewRotation.copy(this.rotation).invert();
@@ -260,6 +276,30 @@ export class Clouds {
     renderer.setRenderTarget(previousTarget);
   }
   /** Diagnostic read-back of the generated volumes and the resolved layer (development only). */
+  /** Resolved cloud layer as base64 float RGBA (development only). */
+  readLayer(renderer: T.WebGLRenderer, which: "resolve" | "march" = "resolve") {
+    const target = new T.WebGLRenderTarget(this.width, this.height, { type: T.FloatType, depthBuffer: false });
+    const pass = new FullscreenPass(
+      passMaterial({
+        fragmentShader: `uniform sampler2D tSource; uniform vec2 uScale; layout(location = 0) out vec4 o;
+          void main(){ o = texelFetch(tSource, ivec2(gl_FragCoord.xy * uScale), 0); }`,
+        uniforms: {
+          tSource: { value: which === "resolve" ? this.textures[0] : this.march.textures[0] },
+          uScale: { value: new T.Vector2(which === "resolve" ? 1 : 0.5, which === "resolve" ? 1 : 0.5) },
+        },
+      }),
+    );
+    pass.render(renderer, target);
+    const out = new Float32Array(this.width * this.height * 4);
+    renderer.readRenderTargetPixels(target, 0, 0, this.width, this.height, out);
+    target.dispose();
+    pass.dispose();
+    const bytes = new Uint8Array(out.buffer);
+    let binary = "";
+    for (let i = 0; i < bytes.length; i += 8192)
+      binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+    return { width: this.width, height: this.height, data: btoa(binary), frame: this.frame };
+  }
   /** Weather map read-back as base64 RGBA bytes (development only). */
   readWeather(renderer: T.WebGLRenderer) {
     const out = new Uint8Array(512 * 512 * 4);

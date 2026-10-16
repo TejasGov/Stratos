@@ -217,10 +217,10 @@ vec3 oceanShade(vec3 rd, float tOcean, vec3 sceneColor, float sceneDist, float r
     Lw = sceneColor * Td * Tu * 1.1 + deep * (1.0 - Tu);
     // Shore foam: contact foam plus bands of surf rolling toward the beach.
     float foamNoise = valueNoise(xz * 0.18 + uTime * 0.15) * 0.65 + valueNoise(xz * 0.9 - uTime * 0.1) * 0.35;
-    float shore = 1.0 - smoothstep(0.0, 1.2, depth);
-    float bands = smoothstep(0.72, 1.0, 0.5 + 0.5 * sin(6.2831 * (depth / 2.6 - uTime * 0.12) + 2.5 * foamNoise)) *
-      (1.0 - smoothstep(0.4, 4.5, depth));
-    float foam = clamp(shore * 0.9 + bands, 0.0, 1.0) * smoothstep(0.25, 0.65, foamNoise);
+    float shore = 1.0 - smoothstep(0.0, 0.7, depth);
+    float bands = smoothstep(0.75, 1.0, 0.5 + 0.5 * sin(6.2831 * (depth / 1.4 - uTime * 0.15) + 2.5 * foamNoise)) *
+      (1.0 - smoothstep(0.3, 2.2, depth)) * 0.65;
+    float foam = clamp(shore * 0.85 + bands, 0.0, 1.0) * smoothstep(0.3, 0.7, foamNoise) * 0.8;
     Lw = mix(Lw, 0.8 * irradiance / PI, foam);
     F *= 1.0 - foam;
     spec *= 1.0 - foam;
@@ -231,7 +231,8 @@ vec3 oceanShade(vec3 rd, float tOcean, vec3 sceneColor, float sceneDist, float r
 
 void main() {
   vec2 uv = vUv;
-  vec3 scene = texture(tScene, uv).rgb;
+  vec4 sceneSample = texture(tScene, uv);
+  vec3 scene = sceneSample.rgb;
   float depth = texture(tDepth, uv).x;
   vec4 ray = uRayMatrix * vec4(uv * 2.0 - 1.0, 1.0, 1.0);
   vec3 rd = normalize(ray.xyz / ray.w);
@@ -239,6 +240,9 @@ void main() {
   vec3 viewPos = view.xyz / view.w;
   bool geometry = depth < 1.0;
   float sceneDist = geometry ? length(viewPos) : 1e9;
+  // Terrain flags its below-sea-level fragments with alpha 0: robust at any range,
+  // unlike comparing reconstructed depth with the ocean distance.
+  bool underwater = geometry && sceneSample.a < 0.5;
   float alt = max(uCameraGlobal.y, 0.5);
   float r = 6360.0 + alt * 0.001;
   // Curved sea surface: stable near root of the sphere at planet radius.
@@ -253,9 +257,9 @@ void main() {
   vec3 color;
   float outDepth = depth;
   vec3 inscatter, trans;
-  if (tOcean > 0.0 && tOcean < sceneDist) {
+  if (tOcean > 0.0 && (tOcean < sceneDist || underwater)) {
     bool seabed;
-    vec3 water = oceanShade(rd, tOcean, scene, sceneDist, r, seabed);
+    vec3 water = oceanShade(rd, tOcean, scene, max(sceneDist, tOcean + 0.5), r, seabed);
     vec3 hit = vec3(uCameraGlobal.x, 0.0, uCameraGlobal.z) + rd * tOcean;
     vec2 suv = (hit.xz - uShadowCenter) / uShadowExtent + 0.5;
     float shade = texture(tCloudShadow, clamp(suv, 0.0, 1.0)).r;
@@ -271,7 +275,7 @@ void main() {
     float shade = texture(tCloudShadow, clamp(suv, 0.0, 1.0)).r;
     float inside = (1.0 - smoothstep(0.38, 0.5, max(abs(suv.x - 0.5), abs(suv.y - 0.5)))) * step(world.y, 1300.0);
     scene *= mix(1.0, 0.3 + 0.7 * shade, inside);
-    surfacePerspective(uv, rd, sceneDist, false, inscatter, trans);
+    surfacePerspective(uv, rd, sceneDist, true, inscatter, trans);
     color = scene * trans + inscatter * uSunIlluminance;
   } else {
     color = texture(tSkyView, skyViewUv(rd, uSunDir, r)).rgb * uSunIlluminance;
@@ -304,7 +308,11 @@ void main() {
     vec2 dinfo = texelFetch(tCloudDepth, p, 0).xy;
     float bil = (i == 0 ? 1.0 - f.x : f.x) * (j == 0 ? 1.0 - f.y : f.y);
     float lim = dinfo.y * 1000.0;
-    float similarity = 1.0 / (1e-3 + abs(min(refDist, 1.6e5) - min(lim, 1.6e5)) / max(min(refDist, 1.6e5), 1.0));
+    // Depth similarity only matters where geometry cuts the cloud: clamping both
+    // distances by the cloud's own depth ignores backgrounds hidden behind it.
+    float cloudAt = c.a < 0.98 ? dinfo.x * 1000.0 * 1.15 : 1.6e5;
+    float a = min(min(refDist, 1.6e5), cloudAt), b = min(min(lim, 1.6e5), cloudAt);
+    float similarity = exp(-abs(a - b) / max(a, 1.0) * 6.0);
     float w = bil * similarity + 1e-5;
     cloud += c * w;
     cloudDepth += dinfo.x * 1000.0 * w;

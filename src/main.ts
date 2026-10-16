@@ -8,6 +8,7 @@ import { Flight, neutral } from "./flight";
 import { Mission, landmarks, routes, type RouteId } from "./missions";
 import { FlightAudio } from "./audio";
 import { createUI, el } from "./ui";
+import { Hud } from "./ui/Hud";
 import { FrameTelemetry } from "./render/FrameTelemetry";
 import {
   FlightInput,
@@ -16,7 +17,8 @@ import {
 } from "./input/FlightInput";
 import { Effects, type EffectsQuality } from "./effects/Effects";
 import type { CollisionWorld } from "./physics/CollisionWorld";
-import { SkyEngine, TRANSPARENT_LAYER } from "./sky/SkyEngine";
+import { SkyEngine, SUN_ILLUMINANCE, TRANSPARENT_LAYER } from "./sky/SkyEngine";
+import { Supersonic } from "./effects/Supersonic";
 import { CombatSystem, type CombatMission } from "./combat/CombatSystem";
 import { CombatView } from "./combat/CombatView";
 
@@ -52,7 +54,12 @@ class Game {
   physics?: CollisionWorld;
   private physicsReady: Promise<void>;
   sky: SkyEngine;
+  supersonic: Supersonic;
   private cameraGlobal = new T.Vector3();
+  private planeGlobal = new T.Vector3();
+  private sunTint = new T.Color();
+  private ambientTint = new T.Color();
+  private shock = 0;
   plane = new T.Group();
   state: State = "menu";
   loaded = false;
@@ -84,7 +91,6 @@ class Game {
   private missileEmitters = new Set<string>();
   private damageEmitters = new Set<string>();
   private queryPoint = new T.Vector3();
-  private workerNotice = false;
   private targetFollow = false;
   private mouseGun = false;
   private mouseSteering = false;
@@ -102,6 +108,11 @@ class Game {
   private look = new T.Vector3();
   private projected = new T.Vector3();
   private mapTerrain = document.createElement("canvas");
+  hud: Hud;
+  private warningText = "";
+  private hudLead = new T.Vector3();
+  private hudTarget = new T.Vector3();
+  private hudGate = new T.Vector3();
   private drawingSize = new T.Vector2();
   private mapCell = "";
   constructor() {
@@ -117,6 +128,7 @@ class Game {
     this.renderer.shadowMap.autoUpdate = false;
     this.renderer.shadowMap.type = T.PCFShadowMap;
     el("scene").appendChild(this.renderer.domElement);
+    this.hud = new Hud(el("hud"));
     this.world = new World(this.scene);
     this.world.configure(this.renderer);
     this.sky = new SkyEngine(this.renderer, this.world.sun);
@@ -135,6 +147,19 @@ class Game {
     this.physicsReady.catch(() => {}); // loadAircraft reports initialization failures after both loads settle.
     this.scene.add(this.plane);
     this.scene.add(this.ringGroup);
+    this.supersonic = new Supersonic(this.scene, this.plane);
+    this.supersonic.onBoom = (position) => {
+      // Sonic boom: shockwave ripple centred on the jet, a jolt and the boom itself.
+      this.shock = 1;
+      this.projected.copy(position).sub(this.world.origin).project(this.camera);
+      this.sky.effects.shockCenter.set(
+        this.projected.x * 0.5 + 0.5,
+        this.projected.y * 0.5 + 0.5,
+      );
+      if (this.settings.shake) this.shakeAmount = Math.max(this.shakeAmount, 1.6);
+      this.audio.boom();
+      this.hud.announce("MACH 1", "THROUGH THE SOUND BARRIER", this.time);
+    };
     this.loadSave();
     this.setState("menu");
     this.bindUI();
@@ -622,12 +647,6 @@ class Game {
           )
         )
           this.flight.crashed = true;
-        this.effects.updateJet(
-          this.flight.position,
-          this.flight.quaternion,
-          this.flight.boost,
-          1 / 60,
-        );
         this.combat.step(
           1 / 60,
           this.flight,
@@ -764,6 +783,8 @@ class Game {
       this.flight.speed,
       this.flight.throttle,
       this.state === "flight",
+      this.flight.boost,
+      this.flight.mach,
     );
     this.hudTime += dt;
     this.mapTime += dt;
@@ -775,6 +796,7 @@ class Game {
       this.mapTime = 0;
       this.drawMap();
     }
+    this.updateSpectacle(dt);
     const drawing = this.renderer.getDrawingBufferSize(this.drawingSize);
     this.effects.setSoftDepth(
       this.sky.depthTexture,
@@ -783,27 +805,75 @@ class Game {
       drawing.y,
     );
     this.cameraGlobal.copy(this.camera.position).add(this.world.origin);
+    this.world.updateTerrain(this.renderer, this.cameraGlobal);
     this.sky.render(this.scene, this.camera, this.cameraGlobal, dt);
+    this.drawHud();
     if (!el("debug").hidden)
       el("debug").textContent =
-        `${this.fps.toFixed(0)} FPS\nFRAME median ${this.telemetry.median.toFixed(1)} / p95 ${this.telemetry.p95.toFixed(1)} ms\n${this.renderer.info.render.calls} draw calls\n${this.renderer.info.render.triangles.toLocaleString()} triangles\n${this.world.chunks.size} terrain chunks / ${this.world.stats.pending} pending\nINSTALL ${this.world.stats.uploadMilliseconds.toFixed(2)} ms / ${(this.world.stats.queuedBytes / 1024).toFixed(0)} KiB queued\n${this.effects.stats.smoke} smoke / ${this.effects.stats.flame} flame\n${this.physics?.status.colliders ?? 0} Rapier colliders\n${this.renderer.info.memory.geometries} geometries / ${this.renderer.info.memory.textures} textures\nORIGIN ${this.world.origin.x}, ${this.world.origin.z}`;
-    if (this.world.stats.workerFallback && !this.workerNotice) {
-      this.workerNotice = true;
-      this.toast(
-        "Terrain is using coarse coverage while generation recovers.",
-        "WORLD STREAMING",
-      );
-    } else if (!this.world.stats.workerFallback) this.workerNotice = false;
+        `${this.fps.toFixed(0)} FPS\nFRAME median ${this.telemetry.median.toFixed(1)} / p95 ${this.telemetry.p95.toFixed(1)} ms\n${this.renderer.info.render.calls} draw calls\n${this.renderer.info.render.triangles.toLocaleString()} triangles\n${this.world.stats.patches} terrain patches / ${this.world.stats.chunks} scenery chunks\n${this.effects.stats.smoke} smoke / ${this.effects.stats.flame} flame\n${this.physics?.status.colliders ?? 0} Rapier colliders\n${this.renderer.info.memory.geometries} geometries / ${this.renderer.info.memory.textures} textures\nORIGIN ${this.world.origin.x}, ${this.world.origin.z}`;
+  }
+  /** Vapour, plume, contrails and the camera-side speed effects. */
+  private updateSpectacle(dt: number) {
+    const flying = this.state === "flight";
+    const sun = this.sky.time.sun;
+    this.sunTint.copy(this.sky.sunColor).multiplyScalar(SUN_ILLUMINANCE);
+    const day = T.MathUtils.smoothstep(sun.y, -0.08, 0.2);
+    this.ambientTint
+      .setRGB(0.32, 0.4, 0.55)
+      .multiplyScalar(SUN_ILLUMINANCE * (0.012 + 0.11 * day));
+    this.supersonic.setLighting(sun, this.sunTint, this.ambientTint);
+    this.planeGlobal.copy(this.plane.position).add(this.world.origin);
+    this.supersonic.update(
+      this.state === "paused" ? 0 : dt,
+      {
+        position: this.planeGlobal,
+        quaternion: this.plane.quaternion,
+        mach: flying ? this.flight.mach : 0,
+        gLoad: flying ? this.flight.gLoad : 1,
+        boost: this.flight.boost && flying,
+        throttle: this.flight.throttle,
+        altitude: this.flight.position.y,
+        active: this.state === "flight" || this.state === "menu",
+      },
+      this.world.origin,
+    );
+    this.shock = Math.max(0, this.shock - dt / 1.3);
+    const effects = this.sky.effects;
+    effects.shock = this.settings.shake ? this.shock : 0;
+    // Speed sensation: radial blur near the ground at high Mach, fading with altitude.
+    const nearGround = 1 - T.MathUtils.smoothstep(this.flight.position.y, 2500, 14000);
+    effects.speedBlur = flying
+      ? T.MathUtils.smoothstep(this.flight.mach, 0.55, 1.4) * (0.25 + 0.75 * nearGround) * 0.7
+      : 0;
+  }
+  /** Development check that GPU terrain heights match the gameplay height function. */
+  terrainParity() {
+    return [0, 1, 2].map((level) =>
+      this.world.terrain.parity(this.renderer, level, heightAt),
+    );
   }
   /** Optional fixed camera in global coordinates, for screenshots and photo framing. */
   debugCamera?: { position: T.Vector3; target: T.Vector3; fov?: number };
+  /** Optional camera locked to the jet at an offset in its own frame. */
+  followCamera?: { offset: T.Vector3; fov?: number };
   private updateCamera(dt: number) {
+    if (this.followCamera) {
+      this.offset.copy(this.followCamera.offset).applyQuaternion(this.rotation).add(this.local);
+      this.camera.position.copy(this.offset);
+      this.camera.up.set(0, 1, 0).applyQuaternion(this.rotation);
+      this.camera.lookAt(this.local);
+      this.camera.fov = this.followCamera.fov ?? 50;
+      this.updateClipPlanes();
+      this.camera.updateProjectionMatrix();
+      return;
+    }
     if (this.debugCamera) {
       this.camera.position.copy(this.debugCamera.position).sub(this.world.origin);
       this.camera.up.set(0, 1, 0);
       this.look.copy(this.debugCamera.target).sub(this.world.origin);
       this.camera.lookAt(this.look);
       this.camera.fov = this.debugCamera.fov ?? 56;
+      this.updateClipPlanes();
       this.camera.updateProjectionMatrix();
       return;
     }
@@ -859,7 +929,14 @@ class Game {
         Math.sin(this.flight.elapsed * 73) * this.shakeAmount * 0.6;
       this.shakeAmount = T.MathUtils.damp(this.shakeAmount, 0, 7, dt);
     }
+    this.updateClipPlanes();
     this.camera.updateProjectionMatrix();
+  }
+  /** Far plane reaches the curved horizon plus mountains peeking above it. */
+  private updateClipPlanes() {
+    const altitude = Math.max(1, this.camera.position.y);
+    const horizon = Math.sqrt(2 * 6360000 * altitude) + 140000;
+    this.camera.far = T.MathUtils.clamp(horizon * 1.1, 80000, 900000);
   }
   private processCombatEvents() {
     for (const event of this.combat.drainEvents()) {
@@ -932,31 +1009,10 @@ class Game {
     });
   }
   private updateHUD() {
-    el("speed").textContent = Math.round(this.flight.speed * 1.94384)
-      .toString()
-      .padStart(3, "0");
-    el("altitude").textContent = Math.round(
-      this.flight.position.y,
-    ).toLocaleString();
-    el("heading").textContent = `${Math.round(
-      ((((-this.flight.yaw * 180) / Math.PI) % 360) + 360) % 360,
-    )
-      .toString()
-      .padStart(3, "0")}°`;
-    el("throttle-value").textContent =
-      `${Math.round(this.flight.throttle * 100)}%`;
-    el("throttle-fill").style.width = `${this.flight.throttle * 100}%`;
-    el("flight-mode").textContent = this.flight.boost
-      ? "AFTERBURNER"
-      : this.flight.speed < 95
-        ? "LOW AIRSPEED"
-        : "CRUISE";
-    el("horizon-line").style.transform =
-      `translateY(${this.flight.pitch * 35}px) rotate(${(-this.flight.roll * 180) / Math.PI}deg)`;
     const agl =
       this.flight.position.y -
       Math.max(0, heightAt(this.flight.position.x, this.flight.position.z));
-    el("warning").textContent =
+    this.warningText =
       this.state === "flight"
         ? agl < 100
           ? "TERRAIN · PULL UP"
@@ -965,23 +1021,72 @@ class Game {
             : ""
         : "";
     this.updateCombatHUD();
+    el("warning").textContent = this.warningText;
     this.updateObjective();
-    const gate = this.mission.gate();
-    el("waypoint").style.display = "none";
-    if (gate && !this.mission.completed) {
-      this.projected.copy(gate).sub(this.world.origin).project(this.camera);
-      if (this.projected.z < 1 && this.projected.z > -1) {
-        el("waypoint").style.display = "block";
-        el("waypoint").style.left =
-          `${T.MathUtils.clamp((this.projected.x * 0.5 + 0.5) * innerWidth, 35, innerWidth - 100)}px`;
-        el("waypoint").style.top =
-          `${T.MathUtils.clamp((-0.5 * this.projected.y + 0.5) * innerHeight, 110, innerHeight - 200)}px`;
-        el("waypoint").querySelector("small")!.textContent =
-          `${(gate.distanceTo(this.flight.position) / 1000).toFixed(1)} KM`;
-      }
-    }
     el("coordinates").textContent =
       `${(this.flight.position.z / -1000).toFixed(1)} N / ${(this.flight.position.x / 1000).toFixed(1)} E`;
+  }
+  /** Feeds the conformal canvas HUD every frame while flying. */
+  private drawHud() {
+    if (this.state === "menu" || this.followCamera || this.debugCamera) {
+      this.hud.canvas.style.display = "none";
+      return;
+    }
+    this.hud.canvas.style.display = "block";
+    const agl =
+      this.flight.position.y -
+      Math.max(0, heightAt(this.flight.position.x, this.flight.position.z));
+    const gate = this.mission.completed ? null : this.mission.gate();
+    const status = this.combat.status;
+    const enemy = this.combat.active
+      ? this.combat.enemies.find((e) => e.id === status.targetId && e.health > 0)
+      : undefined;
+    let lead: T.Vector3 | undefined;
+    if (enemy) {
+      const aim = this.combat.getGunAimPoint(this.flight, this.leadPoint, {
+        blocked: (a, b) => this.combatBlocked(a, b),
+      });
+      if (aim) lead = this.hudLead.copy(aim).sub(this.world.origin);
+    }
+    this.hud.draw({
+      camera: this.camera,
+      plane: this.local,
+      quaternion: this.rotation,
+      velocity: this.flight.velocity,
+      speed: this.flight.speed,
+      mach: this.flight.mach,
+      g: this.flight.gLoad,
+      altitude: this.flight.position.y,
+      agl,
+      throttle: this.flight.throttle,
+      boost: this.flight.boost,
+      time: this.time,
+      mode: this.combat.active
+        ? `A-A  ${status.missiles} MSL  ${status.gunAmmo} GUN  ${status.flares} FLR`
+        : this.mission.active
+          ? `NAV  GATE ${Math.min(this.mission.index + 1, routes[this.mission.active].points.length)}/${routes[this.mission.active].points.length}`
+          : "NAV",
+      warning: this.warningText,
+      threat: !!this.combat.active && status.threat,
+      target: enemy
+        ? {
+            position: this.hudTarget.copy(enemy.position).sub(this.world.origin),
+            name: status.targetName,
+            range: status.range,
+            lock: status.lock,
+            canFire: status.canFire,
+            health: status.targetHealth,
+          }
+        : undefined,
+      lead,
+      waypoint: gate
+        ? {
+            position: this.hudGate.copy(gate).sub(this.world.origin),
+            label: "WPT",
+            distance: gate.distanceTo(this.flight.position),
+          }
+        : undefined,
+    });
   }
   private updateObjective() {
     const objective = el("objective");
@@ -1017,8 +1122,6 @@ class Game {
   private updateCombatHUD() {
     const active = !!this.combat.active && this.state !== "menu";
     el("combat-panel").hidden = !active;
-    el("target-marker").hidden = true;
-    el("lead-marker").hidden = true;
     el("hit-confirm").hidden = this.time >= this.hitUntil || !active;
     if (!active) return;
     const status = this.combat.status;
@@ -1059,7 +1162,7 @@ class Game {
     el("combat-hints").textContent =
       `Left click / ${b.gun.slice(3)} gun · right click / ${b.missile.slice(3)} missile · ${b.target.slice(3)} target · ${b.flare.slice(3)} flare${this.inputActions.connected ? " · GAMEPAD" : ""}`;
     if (status.threat && this.state === "flight") {
-      el("warning").textContent = "INCOMING MISSILE · EVADE / COUNTERMEASURE";
+      this.warningText = "INCOMING MISSILE · EVADE / COUNTERMEASURE";
       if (this.time - this.lastThreatCue > 0.75) {
         this.audio.cue("warning");
         this.lastThreatCue = this.time;
@@ -1068,56 +1171,6 @@ class Game {
     if (status.canFire && !this.lastLock && this.state === "flight")
       this.audio.cue("lock");
     this.lastLock = status.canFire;
-    const target = this.combat.enemies.find(
-      (enemy) => enemy.id === status.targetId && enemy.health > 0,
-    );
-    if (!target) return;
-    this.projected
-      .copy(target.position)
-      .sub(this.world.origin)
-      .applyMatrix4(this.camera.matrixWorldInverse);
-    const behind = this.projected.z > 0;
-    this.projected
-      .copy(target.position)
-      .sub(this.world.origin)
-      .project(this.camera);
-    const offscreen =
-      behind ||
-      Math.abs(this.projected.x) > 0.85 ||
-      Math.abs(this.projected.y) > 0.75;
-    if (behind) {
-      this.projected.x *= -1;
-      this.projected.y *= -1;
-    }
-    const marker = el("target-marker");
-    marker.hidden = false;
-    marker.dataset.locked = String(status.canFire);
-    marker.dataset.offscreen = String(offscreen);
-    marker.style.left = `${T.MathUtils.clamp((this.projected.x * 0.5 + 0.5) * innerWidth, 45, innerWidth - 45)}px`;
-    marker.style.top = `${T.MathUtils.clamp((-this.projected.y * 0.5 + 0.5) * innerHeight, 120, innerHeight - 170)}px`;
-    marker.querySelector("span")!.textContent = offscreen ? "➤" : "◇";
-    if (offscreen)
-      marker.querySelector<HTMLElement>("span")!.style.transform =
-        `rotate(${Math.atan2(-this.projected.y, this.projected.x)}rad)`;
-    else marker.querySelector<HTMLElement>("span")!.style.transform = "";
-    el("target-range").textContent = `${(status.range / 1000).toFixed(1)} KM`;
-    const lead = this.combat.getGunAimPoint(this.flight, this.leadPoint, {
-      blocked: (a, b) => this.combatBlocked(a, b),
-    });
-    if (lead && !offscreen) {
-      this.projected.copy(lead).sub(this.world.origin).project(this.camera);
-      if (
-        this.projected.z > -1 &&
-        this.projected.z < 1 &&
-        Math.abs(this.projected.x) < 0.95 &&
-        Math.abs(this.projected.y) < 0.85
-      ) {
-        const pip = el("lead-marker");
-        pip.hidden = false;
-        pip.style.left = `${(this.projected.x * 0.5 + 0.5) * innerWidth}px`;
-        pip.style.top = `${(-this.projected.y * 0.5 + 0.5) * innerHeight}px`;
-      }
-    }
   }
   private drawMap() {
     const canvas = el<HTMLCanvasElement>("map"),
@@ -1138,9 +1191,12 @@ class Game {
               centerZ + (y / 108 - 0.5) * range,
             ),
             i = (y * 108 + x) * 4;
-          image.data[i] = h > 0 ? 55 + Math.min(h / 20, 40) : 21;
-          image.data[i + 1] = h > 0 ? 88 + Math.min(h / 20, 30) : 58;
-          image.data[i + 2] = h > 0 ? 73 : 64;
+          // Satellite-style palette: reef shallows to deep water, lowland to ridge.
+          const depth = T.MathUtils.clamp(-h / 90, 0, 1);
+          const lift = T.MathUtils.clamp(h / 1300, 0, 1);
+          image.data[i] = h > 0 ? 52 + lift * 70 : 12 + (1 - depth) * 40;
+          image.data[i + 1] = h > 0 ? 92 + lift * 40 : 38 + (1 - depth) * 105;
+          image.data[i + 2] = h > 0 ? 52 + lift * 40 : 62 + (1 - depth) * 80;
           image.data[i + 3] = 255;
         }
       context.putImageData(image, 0, 0);
@@ -1244,6 +1300,7 @@ class Game {
       "--hud-scale",
       String(this.settings.hudScale),
     );
+    this.hud.setScale(this.settings.hudScale);
     el<HTMLSelectElement>("quality").value = this.settings.quality;
     el<HTMLSelectElement>("invert").value = this.settings.invert
       ? "invert"
@@ -1351,7 +1408,7 @@ class Game {
     this.updateDiscovery();
   }
   private fatal(message: string) {
-    this.audio.update(0, 0, false);
+    this.audio.update(0, 0, false, false, 0);
     el("fatal").hidden = false;
     el("fatal-message").textContent = message;
     this.setState("paused");

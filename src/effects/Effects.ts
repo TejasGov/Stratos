@@ -219,16 +219,11 @@ export class Effects {
   private smoke = new ParticleBatch(900, false);
   private flame = new ParticleBatch(420, true);
   private quality: EffectsQuality = "medium";
-  private jetSampler = new DistanceSampler(5, 16);
   private missiles = new Map<string | number, DistanceSampler>();
   private damage = new Map<
     string | number,
     { sampler: DistanceSampler; time: number }
   >();
-  private nozzle = new T.Vector3();
-  private direction = new T.Vector3();
-  private local = new T.Vector3();
-  private jetTime = 0;
   private seed = 7297;
   private disposed = false;
   constructor(scene?: T.Scene, quality: EffectsQuality = "medium") {
@@ -380,72 +375,6 @@ export class Effects {
       emitter.time %= 0.12;
     }
   }
-  /** Aircraft faces local -Z; nozzle offset +8m matches the current jet normalization. */
-  updateJet(
-    position: Point3,
-    quaternion: T.Quaternion,
-    boost: boolean,
-    dt: number,
-    contrails = position.y > 2200,
-  ) {
-    if (!(dt > 0)) return;
-    this.nozzle.set(0, 0.1, 8).applyQuaternion(quaternion);
-    this.nozzle.x += position.x;
-    this.nozzle.y += position.y;
-    this.nozzle.z += position.z;
-    this.direction.set(0, 0, 1).applyQuaternion(quaternion);
-    this.jetTime += dt;
-    if (this.jetTime >= 1 / 30) {
-      const p = this.spawn(
-        this.flame.pool,
-        this.nozzle,
-        boost ? 0.16 : 0.1,
-        boost ? 1.4 : 0.9,
-        0.8,
-        0.8,
-        boost ? 2.8 : 1.4,
-        boost ? 1 : 0.8,
-        boost ? 0.35 : 2,
-      );
-      if (p) {
-        p.vx = this.direction.x * 15;
-        p.vy = this.direction.y * 15;
-        p.vz = this.direction.z * 15;
-        p.stretch = boost ? 4.5 : 2.5;
-        p.dx = this.direction.x;
-        p.dy = this.direction.y;
-        p.dz = this.direction.z;
-      }
-      this.jetTime %= 1 / 30;
-    }
-    if (contrails)
-      this.jetSampler.emit(position, (point) => {
-        for (const side of [-1, 1]) {
-          this.local.set(side * 4.2, 0, 1).applyQuaternion(quaternion);
-          this.local.x += point.x;
-          this.local.y += point.y;
-          this.local.z += point.z;
-          const p = this.spawn(
-            this.smoke.pool,
-            this.local,
-            4.5,
-            0.8,
-            0.5,
-            0.26,
-            0.72,
-            0.78,
-            0.83,
-          );
-          if (p) {
-            p.stretch = 6;
-            p.dx = this.direction.x;
-            p.dy = this.direction.y;
-            p.dz = this.direction.z;
-          }
-        }
-      });
-    else this.jetSampler.reset();
-  }
   updateMissile(id: string | number, position: Point3, dt: number) {
     if (!(dt > 0)) return;
     let sampler = this.missiles.get(id);
@@ -494,8 +423,6 @@ export class Effects {
     this.smoke.pool.clear();
     this.flame.pool.clear();
     this.smoke.geometry.instanceCount = this.flame.geometry.instanceCount = 0;
-    this.jetSampler.reset();
-    this.jetTime = 0;
     this.missiles.clear();
     this.damage.clear();
     this.seed = 7297;

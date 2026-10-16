@@ -1,49 +1,86 @@
 import * as T from "three";
-import { CHUNK, hash, heightAt, buildTerrain, regionMasks } from "./terrain";
+import { CHUNK, forestMask, hash, heightAt, regionMasks } from "./terrain";
 import type { WorldQuality } from "../render/quality";
-import { RequestLedger, terrainTargets } from "./StreamingScheduler";
+import { terrainTargets } from "./StreamingScheduler";
 import { TerrainMaterials } from "../render/TerrainMaterials";
-interface TerrainResult {
-  requestId?: number;
-  key: string;
-  x: number;
-  z: number;
-  segments: number;
-  positions: Float32Array;
-  normals: Float32Array;
-  colors: Float32Array;
-  indices: Uint32Array;
+import { GpuTerrain } from "./GpuTerrain";
+
+const TREE_CANDIDATES: Record<WorldQuality, number> = {
+  low: 500,
+  medium: 1800,
+  high: 3200,
+};
+
+/** A broadleaf tropical tree: trunk plus three lumpy crown masses, vertex-coloured. */
+function treeGeometry() {
+  const parts: T.BufferGeometry[] = [];
+  const trunk = new T.CylinderGeometry(0.35, 0.6, 7, 5, 1, true);
+  trunk.translate(0, 3.5, 0);
+  parts.push(trunk);
+  const crowns: [number, number, number, number][] = [
+    [0, 9.2, 0, 4.4],
+    [1.9, 8.1, 1.1, 3.2],
+    [-1.6, 8.4, -1.3, 3.4],
+  ];
+  for (const [x, y, z, r] of crowns) {
+    const crown = new T.IcosahedronGeometry(r, 1);
+    const p = crown.attributes.position;
+    for (let i = 0; i < p.count; i++) {
+      // Squash and roughen the sphere so crowns read as foliage clumps.
+      const n = 0.85 + 0.3 * hash(i * 13 + Math.round(r * 10), Math.round(x * 7));
+      p.setXYZ(i, p.getX(i) * n, p.getY(i) * n * 0.78, p.getZ(i) * n);
+    }
+    crown.translate(x, y, z);
+    parts.push(crown);
+  }
+  const merged = new T.BufferGeometry();
+  const flats = parts.map((g) => {
+    if (!g.index) return g;
+    const flat = g.toNonIndexed();
+    g.dispose();
+    return flat;
+  });
+  const vertices = flats.reduce((n, g) => n + g.attributes.position.count, 0);
+  const positions = new Float32Array(vertices * 3),
+    colors = new Float32Array(vertices * 3);
+  let offset = 0;
+  flats.forEach((flat, index) => {
+    const p = flat.attributes.position;
+    for (let i = 0; i < p.count; i++, offset++) {
+      positions.set([p.getX(i), p.getY(i), p.getZ(i)], offset * 3);
+      const shade = index === 0 ? [0.16, 0.11, 0.07] : [0.045, 0.1, 0.03];
+      // Lower crown faces are darker: cheap self-occlusion.
+      const ao = index === 0 ? 1 : 0.65 + 0.35 * T.MathUtils.clamp((p.getY(i) - 6) / 6, 0, 1);
+      colors.set(shade.map((c) => c * ao), offset * 3);
+    }
+    flat.dispose();
+  });
+  merged.setAttribute("position", new T.BufferAttribute(positions, 3));
+  merged.setAttribute("color", new T.BufferAttribute(colors, 3));
+  merged.computeVertexNormals();
+  return merged;
 }
+
+/**
+ * The world: GPU heightfield terrain to the horizon, plus streamed scenery
+ * chunks (trees, buildings) near the aircraft and authored landmarks.
+ */
 export class World {
   origin = new T.Vector3();
   chunks = new Map<string, T.Group>();
-  private desired = new Map<
-    string,
-    { x: number; z: number; segments: number }
-  >();
-  private pending = new RequestLedger();
-  private restartAt = 0;
-  private restartAttempts = 0;
-  private fallbackAt = 0;
-  private droppedResults = 0;
-  private uploads = 0;
-  private uploadMilliseconds = 0;
-  private results: TerrainResult[] = [];
-  private worker = new Worker(new URL("./terrain.worker.ts", import.meta.url), {
-    type: "module",
-  });
+  private desired = new Map<string, { x: number; z: number }>();
   private lastCell = "";
-  private terrainMaterials = new TerrainMaterials(this.origin);
-  private mat = this.terrainMaterials.material;
-  private treeGeometry = new T.ConeGeometry(9, 34, 5);
+  private terrainMaterials: TerrainMaterials;
+  readonly terrain: GpuTerrain;
+  private treeGeometry = treeGeometry();
   private treeMaterial = new T.MeshStandardMaterial({
-    color: "#284a36",
-    roughness: 1,
+    vertexColors: true,
+    roughness: 0.92,
   });
   private buildingGeometry = new T.BoxGeometry(1, 1, 1);
   private buildingMaterial = new T.MeshStandardMaterial({
-    color: "#c7c5ae",
-    roughness: 0.9,
+    color: "#d8d2bd",
+    roughness: 0.85,
   });
   private airfield = new T.Group();
   private bridge = new T.Group();
@@ -52,8 +89,9 @@ export class World {
   /** Direction toward the light, updated by the sky engine's time of day. */
   readonly lightDirection = new T.Vector3(-0.55, 0.68, 0.48).normalize();
   private matrix = new T.Object3D();
-  private worldTime = 0;
-  workerError = false;
+  private color = new T.Color();
+  private quality: WorldQuality = "medium";
+  private terrainPrimed = false;
   constructor(private scene: T.Scene) {
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(1024, 1024);
@@ -66,64 +104,33 @@ export class World {
     this.sun.shadow.normalBias = 2;
     this.sun.shadow.bias = -0.0002;
     scene.add(this.sun, this.sun.target);
+    const material = new T.MeshStandardMaterial();
+    this.terrain = new GpuTerrain(material);
+    this.terrainMaterials = new TerrainMaterials(
+      this.origin,
+      this.terrain.uniforms,
+      this.lightDirection,
+    );
+    this.terrain.mesh.material = this.terrainMaterials.material;
+    material.dispose();
+    scene.add(this.terrain.mesh);
     this.createAirfield();
     this.createBridge();
-    this.bindWorker();
-  }
-  private bindWorker() {
-    const worker = this.worker;
-    worker.onmessage = (e: MessageEvent<TerrainResult>) => {
-      const data = e.data;
-      if (
-        worker !== this.worker ||
-        !this.pending.finish(data.key, data.requestId ?? -1)
-      )
-        return;
-      if (this.desired.has(data.key) && this.queuedBytes < 4 * 1024 * 1024)
-        this.results.push(data);
-      else this.droppedResults++;
-      this.dispatch();
-    };
-    worker.onerror = () => this.failWorker();
-    worker.onmessageerror = () => this.failWorker();
-  }
-  private failWorker() {
-    this.worker.terminate();
-    this.workerError = true;
-    this.pending.clear();
-    this.restartAt = this.worldTime + 3;
-  }
-  private get queuedBytes() {
-    return this.results.reduce(
-      (bytes, data) =>
-        bytes +
-        data.positions.byteLength +
-        data.normals.byteLength +
-        data.colors.byteLength +
-        data.indices.byteLength,
-      0,
-    );
   }
   get stats() {
     return {
       chunks: this.chunks.size,
-      pending: this.pending.size,
-      queued: this.results.length,
-      queuedBytes: this.queuedBytes,
-      uploaded: this.uploads,
-      staleDropped: this.droppedResults,
-      workerFallback: this.workerError,
-      restartAttempts: this.restartAttempts,
-      uploadMilliseconds: this.uploadMilliseconds,
+      patches: this.terrain.stats.patches,
+      regenerated: this.terrain.stats.regenerated,
     };
   }
-
   private createAirfield() {
     const runway = new T.Mesh(
       new T.BoxGeometry(65, 1, 1050),
       new T.MeshStandardMaterial({ color: "#3c4c4b", roughness: 1 }),
     );
     runway.position.y = 29;
+    runway.receiveShadow = true;
     this.airfield.add(runway);
     const markings = new T.InstancedMesh(
       new T.BoxGeometry(3, 0.1, 23),
@@ -143,6 +150,7 @@ export class World {
         this.buildingMaterial,
       );
       hangar.position.set(105, 38, -300 + i * 115);
+      hangar.castShadow = hangar.receiveShadow = true;
       this.airfield.add(hangar);
     }
     this.airfield.position.set(-900, 0, 0);
@@ -171,82 +179,27 @@ export class World {
     this.bridge.position.set(2500, 0, -500);
     this.scene.add(this.bridge);
   }
-  private dispatch() {
-    // Reserve headroom for the four already-running worker replies.
-    if (this.workerError || this.queuedBytes >= 3 * 1024 * 1024) return;
-    for (const [key, data] of this.desired) {
-      if (this.pending.size >= 4) break;
-      if (
-        !this.chunks.has(key) &&
-        !this.pending.has(key) &&
-        !this.results.some((r) => r.key === key)
-      ) {
-        const requestId = this.pending.begin(key, this.worldTime);
-        this.worker.postMessage({ key, ...data, requestId });
-      }
-    }
-  }
-  update(position: T.Vector3, dt: number, velocity?: T.Vector3) {
-    this.worldTime += dt;
+  /** Streams scenery around the aircraft and keeps the floating origin near it. */
+  update(position: T.Vector3, _dt: number, velocity?: T.Vector3) {
     const cx = Math.floor(position.x / CHUNK),
       cz = Math.floor(position.z / CHUNK),
       cell = `${cx},${cz}`;
-    this.desired.clear();
-    for (const t of terrainTargets(position, velocity))
-      this.desired.set(`${t.x},${t.z},${t.segments}`, t);
-    if (!this.workerError && this.pending.oldestAge(this.worldTime) > 8)
-      this.failWorker();
-    if (
-      this.workerError &&
-      this.restartAttempts < 2 &&
-      this.worldTime >= this.restartAt
-    ) {
-      this.restartAttempts++;
-      this.worker = new Worker(
-        new URL("./terrain.worker.ts", import.meta.url),
-        { type: "module" },
-      );
-      this.workerError = false;
-      this.bindWorker();
-    }
     if (cell !== this.lastCell) {
       this.lastCell = cell;
-      for (const [key, group] of this.chunks) {
-        const parts = key.split(",").map(Number),
-          replacement = [...this.desired.keys()].find((k) =>
-            k.startsWith(`${parts[0]},${parts[1]},`),
-          );
-        if (
-          !replacement ||
-          (replacement !== key && this.chunks.has(replacement))
-        )
-          this.removeChunk(key, group);
-      }
-      this.results = this.results.filter((r) => this.desired.has(r.key));
-      this.dispatch();
+      this.desired.clear();
+      // Scenery only within the two nearest chunk rings; terrain itself is GPU-driven.
+      for (const t of terrainTargets(position, velocity))
+        if (t.segments >= 24) this.desired.set(`${t.x},${t.z}`, t);
+      for (const [key, group] of this.chunks)
+        if (!this.desired.has(key)) this.removeChunk(key, group);
     }
-    this.dispatch();
-    if (this.workerError && this.worldTime >= this.fallbackAt) {
-      const target = [...this.desired.values()].find(
-        (t) =>
-          ![...this.chunks.keys()].some((key) =>
-            key.startsWith(`${t.x},${t.z},`),
-          ),
-      );
-      if (target) {
-        const key = `${target.x},${target.z},12`;
-        this.addChunk(
-          {
-            key,
-            x: target.x,
-            z: target.z,
-            segments: 12,
-            ...buildTerrain(target.x, target.z, 12),
-          },
-          true,
-        );
-      }
-      this.fallbackAt = this.worldTime + 0.25;
+    // Build at most two chunks per frame, nearest first.
+    let built = 0;
+    for (const [key, target] of this.desired) {
+      if (built >= 2) break;
+      if (this.chunks.has(key)) continue;
+      this.addChunk(key, target.x, target.z);
+      built++;
     }
     const old = this.origin.clone();
     if (
@@ -263,73 +216,26 @@ export class World {
           z * CHUNK - this.origin.z,
         );
       }
-    // Keep one upload possible, then stop at 2 meshes, 2 MiB or 3 ms CPU installation.
-    this.results.sort(
-      (a, b) =>
-        [...this.desired.keys()].indexOf(a.key) -
-        [...this.desired.keys()].indexOf(b.key),
-    );
-    const uploadStart = performance.now();
-    let uploadBytes = 0;
-    for (let i = 0; i < 2 && this.results.length; i++) {
-      if (
-        i > 0 &&
-        (performance.now() - uploadStart > 3 || uploadBytes >= 2 * 1024 * 1024)
-      )
-        break;
-      const data = this.results.shift()!;
-      uploadBytes +=
-        data.positions.byteLength +
-        data.normals.byteLength +
-        data.colors.byteLength +
-        data.indices.byteLength;
-      this.addChunk(data);
-    }
-    this.uploadMilliseconds = performance.now() - uploadStart;
     this.airfield.position.set(-900 - this.origin.x, 0, -this.origin.z);
     this.bridge.position.set(2500 - this.origin.x, 0, -500 - this.origin.z);
+    const texel = 1800 / this.sun.shadow.mapSize.x;
     this.sun.target.position.set(
-      Math.round(
-        (position.x - this.origin.x) / (1800 / this.sun.shadow.mapSize.x),
-      ) *
-        (1800 / this.sun.shadow.mapSize.x),
+      Math.round((position.x - this.origin.x) / texel) * texel,
       0,
-      Math.round(
-        (position.z - this.origin.z) / (1800 / this.sun.shadow.mapSize.x),
-      ) *
-        (1800 / this.sun.shadow.mapSize.x),
+      Math.round((position.z - this.origin.z) / texel) * texel,
     );
     this.sun.position
       .copy(this.sun.target.position)
       .addScaledVector(this.lightDirection, 6500);
   }
-  private addChunk(data: TerrainResult, fallback = false) {
-    if (!this.desired.has(data.key) && !fallback) return;
-    this.uploads++;
-    const group = new T.Group(),
-      geometry = new T.BufferGeometry();
-    geometry.setAttribute("position", new T.BufferAttribute(data.positions, 3));
-    geometry.setAttribute("normal", new T.BufferAttribute(data.normals, 3));
-    geometry.setAttribute("color", new T.BufferAttribute(data.colors, 3));
-    geometry.setIndex(new T.BufferAttribute(data.indices, 1));
-    geometry.computeBoundingSphere();
-    const terrain = new T.Mesh(geometry, this.mat);
-    terrain.receiveShadow = true;
-    group.add(terrain);
-    if (data.segments >= 24) this.addScenery(group, data.x, data.z);
-    group.position.set(
-      data.x * CHUNK - this.origin.x,
-      0,
-      data.z * CHUNK - this.origin.z,
-    );
-    this.scene.add(group);
-    this.chunks.set(data.key, group);
-    for (const [key, other] of this.chunks)
-      if (key !== data.key && key.startsWith(`${data.x},${data.z},`))
-        this.removeChunk(key, other);
+  /** Terrain LOD follows the camera (which may be detached from the aircraft). */
+  updateTerrain(renderer: T.WebGLRenderer, cameraGlobal: T.Vector3) {
+    this.terrain.update(renderer, cameraGlobal, this.origin, !this.terrainPrimed);
+    this.terrainPrimed = true;
   }
-  private addScenery(group: T.Group, cx: number, cz: number) {
-    const trees: T.Matrix4[] = [],
+  private addChunk(key: string, cx: number, cz: number) {
+    const group = new T.Group();
+    const trees: { m: T.Matrix4; tint: number }[] = [],
       buildings: T.Matrix4[] = [];
     // Authored port storage yard: aligned rows make regional infrastructure readable from flight.
     for (let row = 0; row < 4; row++)
@@ -348,49 +254,86 @@ export class World {
         this.matrix.updateMatrix();
         buildings.push(this.matrix.matrix.clone());
       }
-    for (let i = 0; i < 90; i++) {
+    const candidates = TREE_CANDIDATES[this.quality];
+    for (let i = 0; i < candidates; i++) {
       const x = hash(cx * 97 + i, cz * 31) * CHUNK,
         z = hash(cx * 17, cz * 53 + i) * CHUNK,
         wx = cx * CHUNK + x,
         wz = cz * CHUNK + z,
         h = heightAt(wx, wz);
-      if (
-        h < 48 ||
-        h > 650 ||
-        regionMasks(wx, wz).infrastructure > 0.2 ||
-        regionMasks(wx, wz).drainage > 0.65 ||
-        Math.abs(heightAt(wx + 15, wz) - h) > 10
-      )
-        continue;
+      if (h < 12 || h > 1050) continue;
+      const masks = regionMasks(wx, wz);
+      if (masks.infrastructure > 0.2) continue;
       const town = Math.hypot(wx + 900, wz) < 1800 && h < 330;
-      const s = 0.7 + hash(i + 3, cx + cz) * 1.5;
-      this.matrix.position.set(x, h + (town ? 10 * s : 16 * s), z);
-      this.matrix.rotation.set(0, hash(i, cz) * Math.PI, 0);
-      this.matrix.scale.set(
-        town ? 18 * s : s,
-        town ? 20 * s : s,
-        town ? 28 * s : s,
+      if (town && i % 6 === 0) {
+        const s = 0.7 + hash(i + 3, cx + cz) * 1.5;
+        this.matrix.position.set(x, h + 10 * s, z);
+        this.matrix.rotation.set(0, hash(i, cz) * Math.PI, 0);
+        this.matrix.scale.set(18 * s, 20 * s, 28 * s);
+        this.matrix.updateMatrix();
+        buildings.push(this.matrix.matrix.clone());
+        continue;
+      }
+      const nx = (heightAt(wx - 4, wz) - heightAt(wx + 4, wz)) / 8,
+        nz = (heightAt(wx, wz - 4) - heightAt(wx, wz + 4)) / 8;
+      const slope = 1 - 1 / Math.hypot(nx, 1, nz);
+      const density = forestMask(wx, wz, h, slope, masks.moisture);
+      if (density < 0.15 + hash(i + 91, cz - cx) * 0.7) continue;
+      const s = 0.75 + hash(i + 3, cx + cz) * 0.7;
+      this.matrix.position.set(x, h - 0.6, z);
+      this.matrix.rotation.set(
+        (hash(i, 7) - 0.5) * 0.12,
+        hash(i, cz) * Math.PI * 2,
+        (hash(i, 9) - 0.5) * 0.12,
       );
+      this.matrix.scale.set(s, s * (0.85 + hash(i, 4) * 0.4), s);
       this.matrix.updateMatrix();
-      (town ? buildings : trees).push(this.matrix.matrix.clone());
+      trees.push({ m: this.matrix.matrix.clone(), tint: hash(i, 11) });
     }
-    for (const [list, geo, mat] of [
-      [trees, this.treeGeometry, this.treeMaterial],
-      [buildings, this.buildingGeometry, this.buildingMaterial],
-    ] as const) {
-      if (!list.length) continue;
-      const mesh = new T.InstancedMesh(geo, mat, list.length);
+    if (trees.length) {
+      const mesh = new T.InstancedMesh(
+        this.treeGeometry,
+        this.treeMaterial,
+        trees.length,
+      );
+      trees.forEach((t, i) => {
+        mesh.setMatrixAt(i, t.m);
+        // Per-tree hue and brightness variation.
+        this.color.setRGB(
+          0.75 + t.tint * 0.45,
+          0.8 + t.tint * 0.3,
+          0.7 + (1 - t.tint) * 0.35,
+        );
+        mesh.setColorAt(i, this.color);
+      });
       mesh.castShadow = true;
-      list.forEach((m, i) => mesh.setMatrixAt(i, m));
+      mesh.receiveShadow = true;
       mesh.computeBoundingSphere();
       group.add(mesh);
     }
+    if (buildings.length) {
+      const mesh = new T.InstancedMesh(
+        this.buildingGeometry,
+        this.buildingMaterial,
+        buildings.length,
+      );
+      buildings.forEach((m, i) => mesh.setMatrixAt(i, m));
+      mesh.castShadow = mesh.receiveShadow = true;
+      mesh.computeBoundingSphere();
+      group.add(mesh);
+    }
+    group.position.set(
+      cx * CHUNK - this.origin.x,
+      0,
+      cz * CHUNK - this.origin.z,
+    );
+    this.scene.add(group);
+    this.chunks.set(key, group);
   }
   private removeChunk(key: string, group: T.Group) {
     this.scene.remove(group);
     group.children.forEach((child) => {
       if (child instanceof T.InstancedMesh) child.dispose();
-      else if (child instanceof T.Mesh) child.geometry.dispose();
     });
     this.chunks.delete(key);
   }
@@ -404,7 +347,10 @@ export class World {
     this.terrainMaterials.configure(renderer);
   }
   setQuality(quality: WorldQuality) {
+    const changed = quality !== this.quality;
+    this.quality = quality;
     this.terrainMaterials.setQuality(quality);
+    this.terrain.detail = quality === "low" ? 0.8 : quality === "high" ? 1.35 : 1;
     this.sun.castShadow = quality !== "low";
     const size = quality === "high" ? 2048 : 1024;
     if (this.sun.shadow.mapSize.x !== size) {
@@ -412,11 +358,14 @@ export class World {
       this.sun.shadow.map = null;
       this.sun.shadow.mapSize.set(size, size);
     }
+    if (changed) {
+      // Rebuild scenery at the new density.
+      for (const [key, group] of this.chunks) this.removeChunk(key, group);
+      this.lastCell = "";
+    }
   }
   dispose() {
-    this.worker.terminate();
     const sharedMaterials = new Set<T.Material>([
-      this.mat,
       this.treeMaterial,
       this.buildingMaterial,
     ]);
@@ -441,6 +390,8 @@ export class World {
     this.sun.target.removeFromParent();
     this.sun.shadow.dispose();
     for (const [key, g] of this.chunks) this.removeChunk(key, g);
+    this.terrain.mesh.removeFromParent();
+    this.terrain.dispose();
     this.terrainMaterials.dispose();
     this.treeGeometry.dispose();
     this.treeMaterial.dispose();

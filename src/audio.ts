@@ -3,7 +3,55 @@ export class FlightAudio {
   private oscillator?: OscillatorNode;
   private gain?: GainNode;
   private wind?: GainNode;
+  private roar?: GainNode;
+  private roarFilter?: BiquadFilterNode;
+  private noise?: AudioBuffer;
   enabled = true;
+  /** Sonic boom: a sharp double crack followed by a long rolling rumble. */
+  boom() {
+    if (!this.context || !this.enabled || !this.noise || this.context.state !== "running")
+      return;
+    const now = this.context.currentTime;
+    for (const [delay, level] of [
+      [0, 0.55],
+      [0.11, 0.42],
+    ]) {
+      const source = this.context.createBufferSource();
+      source.buffer = this.noise;
+      const filter = this.context.createBiquadFilter();
+      filter.type = "lowpass";
+      filter.frequency.setValueAtTime(900, now + delay);
+      filter.frequency.exponentialRampToValueAtTime(60, now + delay + 2.2);
+      const gain = this.context.createGain();
+      gain.gain.setValueAtTime(0, now + delay);
+      gain.gain.linearRampToValueAtTime(level, now + delay + 0.008);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + delay + 2.4);
+      source.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.context.destination);
+      source.start(now + delay, Math.random());
+      source.stop(now + delay + 2.5);
+      source.onended = () => {
+        source.disconnect();
+        filter.disconnect();
+        gain.disconnect();
+      };
+    }
+    const thump = this.context.createOscillator();
+    const gain = this.context.createGain();
+    thump.frequency.setValueAtTime(70, now);
+    thump.frequency.exponentialRampToValueAtTime(28, now + 1.2);
+    gain.gain.setValueAtTime(0.35, now);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 1.4);
+    thump.connect(gain);
+    gain.connect(this.context.destination);
+    thump.start(now);
+    thump.stop(now + 1.5);
+    thump.onended = () => {
+      thump.disconnect();
+      gain.disconnect();
+    };
+  }
   cue(kind: "gun" | "missile" | "lock" | "warning" | "explosion") {
     if (!this.context || !this.enabled || this.context.state !== "running")
       return;
@@ -75,11 +123,39 @@ export class FlightAudio {
       source.connect(this.wind);
       this.wind.connect(this.context.destination);
       source.start();
+      // White noise shared by the afterburner roar and the sonic boom.
+      this.noise = this.context.createBuffer(1, this.context.sampleRate * 3, this.context.sampleRate);
+      const white = this.noise.getChannelData(0);
+      for (let i = 0; i < white.length; i++) white[i] = Math.random() * 2 - 1;
+      const roarSource = this.context.createBufferSource();
+      roarSource.buffer = this.noise;
+      roarSource.loop = true;
+      this.roarFilter = this.context.createBiquadFilter();
+      this.roarFilter.type = "lowpass";
+      this.roarFilter.frequency.value = 400;
+      this.roar = this.context.createGain();
+      this.roar.gain.value = 0;
+      roarSource.connect(this.roarFilter);
+      this.roarFilter.connect(this.roar);
+      this.roar.connect(this.context.destination);
+      roarSource.start();
     }
     await this.context.resume();
   }
-  update(speed: number, throttle: number, active: boolean) {
+  update(
+    speed: number,
+    throttle: number,
+    active: boolean,
+    boost = false,
+    mach = 0,
+  ) {
     if (!this.context || !this.gain || !this.oscillator || !this.wind) return;
+    const on = active && this.enabled;
+    if (this.roar && this.roarFilter) {
+      this.roar.gain.setTargetAtTime(on && boost ? 0.09 : 0, this.context.currentTime, 0.25);
+      // Past Mach 1 the engine noise trails behind the aircraft: muffle it.
+      this.roarFilter.frequency.setTargetAtTime(mach > 1 ? 160 : 520, this.context.currentTime, 0.4);
+    }
     const t = this.context.currentTime;
     this.oscillator.frequency.setTargetAtTime(
       36 + throttle * 40 + speed * 0.12,
