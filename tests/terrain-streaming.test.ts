@@ -6,6 +6,8 @@ import {
   regionMasks,
 } from "../src/world/terrain";
 import { RequestLedger, terrainTargets } from "../src/world/StreamingScheduler";
+import { HAVEN } from "../src/world/bases";
+import { GROUND_DROP } from "../src/world/basePads";
 
 test("collision surface is the drawn 8 m clipmap grid, bilinearly interpolated", () => {
   for (const [x, z] of [
@@ -30,7 +32,7 @@ test("collision surface is the drawn 8 m clipmap grid, bilinearly interpolated",
 });
 
 test("authored region retains runway level and infrastructure/drainage masks", () => {
-  assert.equal(heightAt(-900, 0), 28);
+  assert.equal(heightAt(-900, 0), HAVEN.runway.elevation - GROUND_DROP);
   assert.ok(regionMasks(-900, 0).infrastructure > 0.9);
   assert.ok(regionMasks(180, -900).drainage > 0.2);
   assert.ok(heightAt(2500, -500) < 0);
