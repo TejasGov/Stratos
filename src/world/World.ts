@@ -5,6 +5,7 @@ import { terrainTargets } from "./StreamingScheduler";
 import { TerrainMaterials } from "../render/TerrainMaterials";
 import { GpuTerrain } from "./GpuTerrain";
 import { Airbase } from "./Airbase";
+import { Crowds } from "./Crowds";
 
 const TREE_CANDIDATES: Record<WorldQuality, number> = {
   low: 500,
@@ -86,6 +87,7 @@ export class World {
   private bridge = new T.Group();
   /** The two air bases (Haven and Blackridge): parked jets, strike-target wrecks. */
   readonly airbase: Airbase;
+  readonly crowds: Crowds;
   /** Shadow-casting sun/moon light; the sky engine owns its colour and intensity. */
   readonly sun = new T.DirectionalLight("#fff1d9", 2.5);
   /** Direction toward the light, updated by the sky engine's time of day. */
@@ -117,6 +119,7 @@ export class World {
     material.dispose();
     scene.add(this.terrain.mesh);
     this.airbase = new Airbase(scene);
+    this.crowds = new Crowds(scene);
     this.createBridge();
   }
   get stats() {
@@ -187,6 +190,7 @@ export class World {
         );
       }
     this.airbase.update(_dt, this.origin, position, this.nightFactor());
+    this.crowds.update(_dt, this.origin, position);
     this.bridge.position.set(2500 - this.origin.x, 0, -500 - this.origin.z);
     const texel = 1800 / this.sun.shadow.mapSize.x;
     this.sun.target.position.set(
@@ -348,6 +352,7 @@ export class World {
     const geometries = new Set<T.BufferGeometry>();
     const materials = new Set<T.Material>();
     this.airbase.dispose();
+    this.crowds.dispose();
     for (const root of [this.bridge]) {
       root.traverse((object) => {
         if (object instanceof T.Mesh) {

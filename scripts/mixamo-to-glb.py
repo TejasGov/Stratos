@@ -25,6 +25,14 @@ if kind == "character":
         if img.size[0] > 1024:
             img.scale(1024, max(1, round(img.size[1] * 1024 / img.size[0])))
     meshes = [o for o in bpy.data.objects if o.type == "MESH"]
+    # One skinned mesh per character keeps crowds to a draw call per material.
+    if len(meshes) > 1:
+        with bpy.context.temp_override(
+            active_object=meshes[0], selected_editable_objects=meshes, selected_objects=meshes
+        ):
+            bpy.ops.object.join()
+        meshes = [o for o in bpy.data.objects if o.type == "MESH"]
+    info["meshes"] = len(meshes)
     for ob in meshes:
         ob.data.calc_loop_triangles()
     tris = sum(len(o.data.loop_triangles) for o in meshes)

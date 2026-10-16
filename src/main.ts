@@ -190,7 +190,11 @@ class Game {
     });
     this.combatView.loadDefenseModels(this.gltf).catch(() => {});
     // Strike damage shows on the world's buildings; combat never imports world code.
-    this.combat.onTargetDestroyed = (id) => this.world.airbase.destroy(id);
+    this.combat.onTargetDestroyed = (id) => {
+      this.world.airbase.destroy(id);
+      this.world.crowds.strike(id);
+    };
+    this.world.crowds.load(this.gltf).catch(() => {});
     this.physicsReady = import("./physics/CollisionWorld")
       .then(({ CollisionWorld }) => CollisionWorld.create(heightAt))
       .then((physics) => {
@@ -699,6 +703,7 @@ class Game {
     this.combat.stop();
     this.combatView.clear();
     this.world.airbase.reset();
+    this.world.crowds.reset();
     this.effects.clear();
     this.telemetry.reset();
     this.missileEmitters.clear();
