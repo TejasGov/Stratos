@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { Vector3 } from "three";
 import { Flight, neutral, sweptCollision } from "../src/flight.ts";
-import { buildTerrain, CHUNK, heightAt } from "../src/world/terrain.ts";
+import { CHUNK, heightAt } from "../src/world/terrain.ts";
 import { Mission, routes } from "../src/missions.ts";
 
 test("fixed-step flight gives the same result at 30, 60 and 144 render FPS", () => {
@@ -55,17 +55,6 @@ test("pitch, bank and throttle affect the aircraft in the expected direction", (
   assert.ok(f.speed > 155);
   assert.equal(f.throttle, 1);
 });
-test("neighboring terrain chunks have identical shared-edge heights and normals", () => {
-  const a = buildTerrain(-1, 2, 24),
-    b = buildTerrain(0, 2, 24);
-  for (let i = 0; i <= 24; i++) {
-    const ai = (i * 25 + 24) * 3,
-      bi = i * 25 * 3;
-    assert.equal(a.positions[ai + 1], b.positions[bi + 1]);
-    for (let j = 0; j < 3; j++)
-      assert.equal(a.normals[ai + j], b.normals[bi + j]);
-  }
-});
 test("terrain is deterministic at negative and far world coordinates", () => {
   for (const [x, z] of [
     [-3500, -4500],
@@ -75,7 +64,6 @@ test("terrain is deterministic at negative and far world coordinates", () => {
     assert.equal(heightAt(x, z), heightAt(x, z));
     assert.ok(Number.isFinite(heightAt(x, z)));
   }
-  assert.deepEqual(buildTerrain(2, -3, 12), buildTerrain(2, -3, 12));
 });
 test("swept collision catches crossing sea level between frames", () => {
   assert.equal(

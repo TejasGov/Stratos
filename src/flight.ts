@@ -80,6 +80,21 @@ export class Flight {
     this.lastVelocity.copy(this.velocity);
     this.updateAtmosphere();
   }
+  /**
+   * Clears control and load state while keeping position, attitude and speed:
+   * used when taking off straight out of the title cinematic.
+   */
+  resetDynamics() {
+    this.previous.copy(this.position);
+    this.previousQuaternion.copy(this.quaternion);
+    this.angularVelocity.set(0, 0, 0);
+    this.throttle = 0.63;
+    this.boost = false;
+    this.crashed = false;
+    this.gLoad = 1;
+    this.lastVelocity.copy(this.velocity);
+    this.updateAtmosphere();
+  }
   private updateAtmosphere() {
     this.density = airDensityRatio(this.position.y);
     this.mach = this.speed / speedOfSound(this.position.y);

@@ -5,7 +5,6 @@
 ```ts
 const effects = new Effects(scene, "medium");
 // During running simulation, once per fixed step or frame with game-clock delta:
-effects.updateJet(flight.position, flight.quaternion, flight.boost, gameDt);
 effects.updateMissile(missile.id, missile.position, gameDt);
 effects.emitDamageSmoke(aircraft.id, aircraft.position, gameDt, damageFraction);
 effects.emitExplosion(hit.globalPosition, 1.5);

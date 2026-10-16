@@ -167,7 +167,7 @@ class Game {
       if (o instanceof T.LineSegments) o.layers.set(TRANSPARENT_LAYER);
     });
     this.physicsReady = import("./physics/CollisionWorld")
-      .then(({ CollisionWorld }) => CollisionWorld.create(renderedHeightAt))
+      .then(({ CollisionWorld }) => CollisionWorld.create(heightAt))
       .then((physics) => {
         this.physics = physics;
       });
@@ -304,11 +304,13 @@ class Game {
     }
   }
   /** Hostile fighters come from the rest of the fleet (never the player's own type). */
+  private adversaryToken = 0;
   private async loadAdversaries() {
     const ids = ["su57", "j20", "su30", "f22"].filter((id) => id !== this.airframe.id).slice(0, 3);
+    const token = ++this.adversaryToken;
     try {
       const models = await Promise.all(ids.map((id) => this.loadModel(airframe(id))));
-      this.combatView.setEnemyTemplates(models);
+      if (token === this.adversaryToken) this.combatView.setEnemyTemplates(models);
     } catch {
       // Enemies fall back to the player's model.
     }
@@ -318,10 +320,12 @@ class Game {
       const chosen = airframe(this.settings.aircraft);
       this.airframe = chosen;
       this.syncHangar();
+      const token = this.hangarToken;
       const model = await this.loadModel(chosen, (fraction) => {
         el("load-progress").style.width = `${Math.min(95, fraction * 95)}%`;
       });
-      this.applyAirframe(chosen, model);
+      // The hangar may already have moved on (and applied its own choice).
+      if (token === this.hangarToken) this.applyAirframe(chosen, model);
       await this.physicsReady;
       await this.world.materialsReady;
       if (this.world.materialError)
@@ -659,9 +663,7 @@ class Game {
       this.flight.previous.copy(this.flight.position);
     } else if (fromShowcase) {
       // Take off straight out of the title cinematic: same jet, same sky.
-      this.flight.previous.copy(this.flight.position);
-      this.flight.previousQuaternion.copy(this.flight.quaternion);
-      this.flight.crashed = false;
+      this.flight.resetDynamics();
     } else this.flight.reset();
     if (combatMission) this.combat.start(combatMission, this.flight);
     this.cameraReady = fromShowcase;
@@ -722,9 +724,7 @@ class Game {
     const sunHeading = Math.atan2(-sun.x, -sun.z);
     // By day the sun sits behind the camera's right shoulder and rakes across
     // the jet and the cumulus; in twilight the camera turns into the afterglow.
-    const angle =
-      this.showcaseSunAngle ??
-      T.MathUtils.lerp(-1.13, 1.1, T.MathUtils.smoothstep(sun.y, -0.02, 0.1));
+    const angle = T.MathUtils.lerp(-1.13, 1.1, T.MathUtils.smoothstep(sun.y, -0.02, 0.1));
     const yaw = sunHeading + angle + Math.sin(t * 0.045) * 0.3;
     const turnRate = Math.cos(t * 0.045) * 0.3 * 0.045;
     const f = this.flight;
@@ -790,16 +790,15 @@ class Game {
     if (!best) return;
     f.position.x = best.x - dx * 3500;
     f.position.z = best.z - dz * 3500;
+    f.position.y = Math.max(800, heightAt(f.position.x, f.position.z) + 320);
     f.previous.copy(f.position);
     this.showcaseStarted = true;
-    this.showcaseAltitude = 800;
+    this.showcaseAltitude = f.position.y;
     this.sky.clouds.invalidate();
     this.sky.lightning.soon(1.5);
     this.cameraReady = false;
   }
   private showcaseAltitude = 0;
-  /** Optional fixed showcase heading relative to the sun (radians, positive = sun on the right). */
-  showcaseSunAngle?: number;
   private showcaseEuler = new T.Euler();
   private menuYaw = new T.Quaternion();
   private menuAxis = new T.Vector3(0, 1, 0);
@@ -840,7 +839,9 @@ class Game {
     el("photo").hidden = false;
     document.body.dataset.photo = "true";
     this.sky.clouds.converge = 2;
-    this.sky.lightning.timeScale = 0;
+    // Captures are taken at full resolution.
+    this.resolution.reset();
+    this.applyQuality();
     this.syncPhoto();
   }
   private exitPhoto() {
@@ -851,7 +852,6 @@ class Game {
     this.sky.exposureBias = 0;
     this.sky.clouds.converge = 1;
     this.sky.lightning.clear();
-    this.sky.lightning.timeScale = 1;
     this.sky.time.hours = this.photoSaved.hours;
     if (this.sky.weather !== this.photoSaved.weather) this.sky.setWeather(this.photoSaved.weather);
     this.plane.visible = true;
@@ -964,6 +964,7 @@ class Game {
     this.setState("menu");
     this.buildRings();
     this.updateDiscovery();
+    this.syncConditions();
   }
   private input() {
     const controls = this.inputActions.sample(
@@ -1218,12 +1219,19 @@ class Game {
       this.world.origin,
     );
     this.updateRings();
+    // Rain on the canopy beneath a storm cell's base.
+    const cell = this.sky.clouds.weatherAt(this.flight.position.x, this.flight.position.z);
+    const rain =
+      T.MathUtils.smoothstep(cell.type, 0.5, 0.85) *
+      (1 - T.MathUtils.smoothstep(this.flight.position.y, 1100, 1500)) *
+      this.sky.clouds.weatherState.storm;
     this.audio.update(
       this.flight.speed,
       this.flight.throttle,
       this.state === "flight",
       this.flight.boost,
       this.flight.mach,
+      rain,
     );
     this.hudTime += dt;
     this.mapTime += dt;
@@ -1245,6 +1253,9 @@ class Game {
     );
     this.cameraGlobal.copy(this.camera.position).add(this.world.origin);
     this.world.updateTerrain(this.renderer, this.cameraGlobal);
+    // Strikes and thunder only run while the world does; photo mode freezes them.
+    this.sky.lightning.timeScale =
+      !this.photo && (this.state === "flight" || this.state === "menu") ? 1 : 0;
     this.sky.render(this.scene, this.camera, this.cameraGlobal, dt);
     if (this.captureNext) {
       // Read the drawing buffer in the same task as the render, before it is presented.
@@ -1297,37 +1308,7 @@ class Game {
       ? T.MathUtils.smoothstep(this.flight.mach, 0.55, 1.4) * (0.25 + 0.75 * nearGround) * 0.7
       : 0;
   }
-  /** Development check that GPU terrain heights match the gameplay height function. */
-  terrainParity() {
-    return [0, 1, 2].map((level) =>
-      this.world.terrain.parity(this.renderer, level, heightAt),
-    );
-  }
-  /** Optional fixed camera in global coordinates, for screenshots and photo framing. */
-  debugCamera?: { position: T.Vector3; target: T.Vector3; fov?: number };
-  /** Optional camera locked to the jet at an offset in its own frame. */
-  followCamera?: { offset: T.Vector3; fov?: number };
   private updateCamera(dt: number) {
-    if (this.followCamera) {
-      this.offset.copy(this.followCamera.offset).applyQuaternion(this.rotation).add(this.local);
-      this.camera.position.copy(this.offset);
-      this.camera.up.set(0, 1, 0).applyQuaternion(this.rotation);
-      this.camera.lookAt(this.local);
-      this.camera.fov = this.followCamera.fov ?? 50;
-      this.updateClipPlanes();
-      this.camera.updateProjectionMatrix();
-      return;
-    }
-    if (this.debugCamera) {
-      this.camera.position.copy(this.debugCamera.position).sub(this.world.origin);
-      this.camera.up.set(0, 1, 0);
-      this.look.copy(this.debugCamera.target).sub(this.world.origin);
-      this.camera.lookAt(this.look);
-      this.camera.fov = this.debugCamera.fov ?? 56;
-      this.updateClipPlanes();
-      this.camera.updateProjectionMatrix();
-      return;
-    }
     if (this.photo) {
       const o = this.photoOrbit;
       this.offset
@@ -1501,7 +1482,7 @@ class Game {
   }
   /** Feeds the conformal canvas HUD every frame while flying. */
   private drawHud() {
-    if (this.state === "menu" || this.photo || this.followCamera || this.debugCamera) {
+    if (this.state === "menu" || this.photo) {
       this.hud.canvas.style.display = "none";
       return;
     }
@@ -1896,8 +1877,11 @@ class Game {
   }
 }
 try {
-  // Exposed for automated visual checks and console exploration.
-  (window as unknown as { stratos: Game }).stratos = new Game();
+  const game = new Game();
+  // Development builds (or ?debug) expose the game for console exploration
+  // and automated visual checks.
+  if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug"))
+    (window as unknown as { stratos: Game }).stratos = game;
 } catch (error) {
   el("fatal").hidden = false;
   el("fatal-message").textContent =

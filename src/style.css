@@ -219,13 +219,6 @@ a {
 .flight-only {
   display: none;
 }
-#flight-mode {
-  display: block;
-  font-size: 8px;
-  letter-spacing: 1.6px;
-  opacity: 0.7;
-  margin-top: 10px;
-}
 .map-panel {
   position: absolute;
   right: 44px;
@@ -960,6 +953,9 @@ body[data-state="flight"] .map-panel {
 }
 
 /* Photo mode */
+.photo-panel[hidden] {
+  display: none;
+}
 body[data-photo] .topbar,
 body[data-photo] #hud,
 body[data-photo] #hud-canvas,

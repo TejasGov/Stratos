@@ -294,4 +294,3 @@ export class TerrainMaterials {
   }
 }
 
-export { TERRAIN_LEVELS };

@@ -35,7 +35,8 @@ test("Heightfield axes follow asymmetric world terrain and streaming stays bound
   const collision = await CollisionWorld.create(sample);
   try {
     const point = new Vector3(185, 0, 315);
-    for (let i = 0; i < 14; i++) collision.update(point, new Vector3());
+    // One tile streams per call: 25 calls fill the 5×5 ring.
+    for (let i = 0; i < 26; i++) collision.update(point, new Vector3());
     assert.equal(collision.status.terrainTiles, 25);
     const hit = collision.sweep(
       new Vector3(point.x, 150, point.z),

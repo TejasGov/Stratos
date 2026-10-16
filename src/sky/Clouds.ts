@@ -325,66 +325,6 @@ export class Clouds {
     this.previousCamera.copy(cameraGlobal);
     renderer.setRenderTarget(previousTarget);
   }
-  /** Diagnostic read-back of the generated volumes and the resolved layer (development only). */
-  /** Resolved cloud layer as base64 float RGBA (development only). */
-  readLayer(renderer: T.WebGLRenderer, which: "resolve" | "march" = "resolve") {
-    const target = new T.WebGLRenderTarget(this.width, this.height, { type: T.FloatType, depthBuffer: false });
-    const pass = new FullscreenPass(
-      passMaterial({
-        fragmentShader: `uniform sampler2D tSource; uniform vec2 uScale; layout(location = 0) out vec4 o;
-          void main(){ o = texelFetch(tSource, ivec2(gl_FragCoord.xy * uScale), 0); }`,
-        uniforms: {
-          tSource: { value: which === "resolve" ? this.textures[0] : this.march.textures[0] },
-          uScale: { value: new T.Vector2(which === "resolve" ? 1 : 0.5, which === "resolve" ? 1 : 0.5) },
-        },
-      }),
-    );
-    pass.render(renderer, target);
-    const out = new Float32Array(this.width * this.height * 4);
-    renderer.readRenderTargetPixels(target, 0, 0, this.width, this.height, out);
-    target.dispose();
-    pass.dispose();
-    const bytes = new Uint8Array(out.buffer);
-    let binary = "";
-    for (let i = 0; i < bytes.length; i += 8192)
-      binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
-    return { width: this.width, height: this.height, data: btoa(binary), frame: this.frame };
-  }
-  /** Weather map read-back as base64 RGBA bytes (development only). */
-  readWeather(renderer: T.WebGLRenderer) {
-    const out = new Uint8Array(512 * 512 * 4);
-    renderer.readRenderTargetPixels(this.weather, 0, 0, 512, 512, out);
-    let binary = "";
-    for (let i = 0; i < out.length; i += 8192)
-      binary += String.fromCharCode(...out.subarray(i, i + 8192));
-    return btoa(binary);
-  }
-  probe(renderer: T.WebGLRenderer) {
-    const target = new T.WebGLRenderTarget(4, 1, { type: T.FloatType, depthBuffer: false });
-    const pass = new FullscreenPass(
-      passMaterial({
-        fragmentShader: `uniform highp sampler3D tShape; uniform highp sampler3D tDetail; uniform sampler2D tWeather; uniform sampler2D tCloud;
-        layout(location = 0) out vec4 o;
-        void main(){ int x = int(gl_FragCoord.x);
-          if (x == 0) o = texture(tShape, vec3(0.3, 0.6, 0.2));
-          else if (x == 1) o = texture(tDetail, vec3(0.3, 0.6, 0.2));
-          else if (x == 2) o = texture(tWeather, vec2(0.3, 0.6));
-          else o = texture(tCloud, vec2(0.5, 0.75)); }`,
-        uniforms: {
-          tShape: { value: this.shape.texture },
-          tDetail: { value: this.detail.texture },
-          tWeather: { value: this.weather.texture },
-          tCloud: { value: this.textures[0] },
-        },
-      }),
-    );
-    pass.render(renderer, target);
-    const out = new Float32Array(16);
-    renderer.readRenderTargetPixels(target, 0, 0, 4, 1, out);
-    target.dispose();
-    pass.dispose();
-    return Array.from(out).map((v) => +v.toFixed(3));
-  }
   dispose() {
     for (const target of [
       this.shape,

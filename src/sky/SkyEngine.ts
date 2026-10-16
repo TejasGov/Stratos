@@ -100,8 +100,6 @@ export class SkyEngine {
     flash: 0,
   };
   exposureBias = 0;
-  /** Development toggles for isolating passes in screenshots. */
-  debug = { stars: true, flare: true, bloom: true, rays: true, tonemapper: 1 };
   private sceneTarget: T.WebGLRenderTarget;
   private compositeTarget: T.WebGLRenderTarget;
   private depth: T.DepthTexture;
@@ -290,7 +288,8 @@ export class SkyEngine {
           uShock: { value: 0 },
           uShockCenter: { value: this.effects.shockCenter },
           uVignette: { value: 0.32 },
-          uTonemapper: { value: 0 },
+          // 1: ACES filmic (0: AgX, kept for comparison).
+          uTonemapper: { value: 1 },
         },
       }),
     );
@@ -453,7 +452,7 @@ export class SkyEngine {
     const highStars = T.MathUtils.smoothstep(altitude, 25000, 40000);
     // Stars only once the sun is well below the horizon (nautical twilight onward).
     const starNight = T.MathUtils.smoothstep(-this.time.sun.y, 0.07, 0.22);
-    u.uStars.value = this.debug.stars ? Math.max(starNight, highStars * 0.04) : 0;
+    u.uStars.value = Math.max(starNight, highStars * 0.04);
     u.uPixelAngle.value =
       (2 * Math.tan(T.MathUtils.degToRad(camera.fov) / 2)) / this.height;
     this.composite.render(renderer, this.compositeTarget);
@@ -573,45 +572,8 @@ export class SkyEngine {
     f.uMinExposure.value = 0.25;
     // Open the eye up through twilight, well before full night.
     f.uMaxExposure.value = T.MathUtils.lerp(5, 40, T.MathUtils.smoothstep(-this.time.sun.y, -0.06, 0.08));
-    f.uRays.value = onScreen && this.debug.rays ? 0.3 * SUN_ILLUMINANCE * (1 - night) : 0;
-    f.uFlare.value = this.debug.flare ? 1 : 0;
-    f.uTonemapper.value = this.debug.tonemapper;
-    f.uBloom.value = this.debug.bloom ? 0.06 : 0;
+    f.uRays.value = onScreen ? 0.3 * SUN_ILLUMINANCE * (1 - night) : 0;
     this.finalPass.render(renderer, null);
-  }
-  /** Diagnostic read-back of key HDR values (development only). */
-  probe(points: [number, number][] = [[0.5, 0.5]]) {
-    const n = points.length;
-    const target = new T.WebGLRenderTarget(n, 6, { type: T.FloatType, depthBuffer: false });
-    const pass = new FullscreenPass(
-      passMaterial({
-        fragmentShader: `uniform sampler2D tScene, tComposite, tExposure, tAerialIn, tAerialT, tSky; uniform vec2 uPoints[8];
-        layout(location = 0) out vec4 o;
-        void main(){ int x = int(gl_FragCoord.x); int y = int(gl_FragCoord.y); vec2 p = uPoints[x];
-          if (y == 0) o = texture(tScene, p);
-          else if (y == 1) o = texture(tComposite, p);
-          else if (y == 2) o = texture(tExposure, vec2(0.5));
-          else if (y == 3) o = texture(tAerialIn, vec2((6.0 * 32.0 + 16.0) / 1024.0, 0.5));
-          else if (y == 4) o = texture(tAerialT, vec2((6.0 * 32.0 + 16.0) / 1024.0, 0.5));
-          else o = texture(tSky, vec2(0.5, 0.52)); }`,
-        uniforms: {
-          tScene: { value: this.sceneTarget.texture },
-          tComposite: { value: this.compositeTarget.texture },
-          tExposure: { value: this.exposure[this.exposureIndex].texture },
-          tAerialIn: { value: this.atmosphere.aerial.textures[0] },
-          tAerialT: { value: this.atmosphere.aerial.textures[1] },
-          tSky: { value: this.atmosphere.skyView.texture },
-          uPoints: { value: Array.from({ length: 8 }, (_, i) => new T.Vector2(...(points[i] ?? [0.5, 0.5]))) },
-        },
-      }),
-    );
-    pass.render(this.renderer, target);
-    const out = new Float32Array(n * 6 * 4);
-    this.renderer.readRenderTargetPixels(target, 0, 0, n, 6, out);
-    target.dispose();
-    pass.dispose();
-    const rows = ["scene", "composite", "exposure", "aerialIn6", "aerialT6", "skyHorizon"];
-    return Object.fromEntries(rows.map((r, y) => [r, Array.from({ length: n }, (_, x) => Array.from(out.slice((y * n + x) * 4, (y * n + x) * 4 + 3)).map((v) => +v.toPrecision(3)))]));
   }
   dispose() {
     this.atmosphere.dispose();
