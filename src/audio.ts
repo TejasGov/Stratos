@@ -52,6 +52,49 @@ export class FlightAudio {
       gain.disconnect();
     };
   }
+  /**
+   * Thunder from a strike `distance` metres away, arriving at the speed of
+   * sound: a sharp crack when close, otherwise a long low roll.
+   */
+  thunder(distance: number, power = 1) {
+    if (!this.context || !this.enabled || !this.noise || this.context.state !== "running")
+      return;
+    const ctx = this.context;
+    const start = ctx.currentTime + distance / 343;
+    const near = 1 - Math.min(1, distance / 4000);
+    const level = Math.min(0.5, (0.9 * power) / (1 + distance / 1500));
+    if (level < 0.01) return;
+    const duration = 2.5 + Math.min(6, distance / 3000) + Math.random() * 1.5;
+    // Several overlapping rolls: sound from different parts of the channel.
+    const rolls = 3 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < rolls; i++) {
+      const at = start + (i === 0 ? 0 : Math.random() * duration * 0.5);
+      const source = ctx.createBufferSource();
+      source.buffer = this.noise;
+      const filter = ctx.createBiquadFilter();
+      filter.type = "lowpass";
+      // Air absorbs high frequencies: distant thunder is a rumble.
+      const cutoff = i === 0 ? 180 + near * 2400 : 90 + near * 300;
+      filter.frequency.setValueAtTime(cutoff, at);
+      filter.frequency.exponentialRampToValueAtTime(45, at + duration);
+      const gain = ctx.createGain();
+      const peak = level * (i === 0 ? 1 : 0.4 + Math.random() * 0.5);
+      gain.gain.setValueAtTime(0, at);
+      gain.gain.linearRampToValueAtTime(peak, at + (i === 0 ? 0.02 + (1 - near) * 0.4 : 0.3));
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + duration);
+      source.connect(filter);
+      filter.connect(gain);
+      gain.connect(ctx.destination);
+      source.loop = true;
+      source.start(at, Math.random() * 2);
+      source.stop(at + duration + 0.1);
+      source.onended = () => {
+        source.disconnect();
+        filter.disconnect();
+        gain.disconnect();
+      };
+    }
+  }
   cue(kind: "gun" | "missile" | "lock" | "warning" | "explosion") {
     if (!this.context || !this.enabled || this.context.state !== "running")
       return;

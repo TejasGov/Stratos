@@ -43,6 +43,8 @@ export class Flight {
   elapsed = 0;
   crashed = false;
   boost = false;
+  /** Airframe multipliers: dry thrust, afterburner, drag and control authority. */
+  performance = { thrust: 1, afterburner: 1, drag: 1, agility: 1 };
   /** Mach number, ambient density ratio and smoothed load factor (G) for HUD and effects. */
   mach = 0.46;
   density = 1;
@@ -110,7 +112,8 @@ export class Flight {
     const equivalentSpeed = this.speed * Math.sqrt(this.density);
     // Arcade authority follows true airspeed; only the thin stratosphere softens it.
     const thinAir = 1 - 0.5 * MathUtils.smoothstep(this.position.y, 15000, 30000);
-    const authority = MathUtils.clamp(this.speed / 160, 0.45, 1.2) * thinAir;
+    const authority =
+      MathUtils.clamp(this.speed / 160, 0.45, 1.2) * thinAir * this.performance.agility;
     if (this.controlMode === "assisted") {
       this.angles.setFromQuaternion(this.quaternion, "YXZ");
       let desiredPitch = control.pitch
@@ -211,10 +214,12 @@ export class Flight {
     // Thrust lapses with altitude more slowly than density falls, so the jet
     // goes faster up high: Mach ~0.95 level at sea level (dive to go supersonic), ~1.15 at 6 km, ~1.8 at 20 km.
     const lapse = this.density ** 0.7;
-    const thrust = (9 + this.throttle * 33 + (this.boost ? 130 : 0)) * lapse;
+    const perf = this.performance;
+    const thrust =
+      (9 + this.throttle * 33 * perf.thrust + (this.boost ? 130 * perf.afterburner : 0)) * lapse;
     // Transonic wave-drag rise, peaking just past Mach 1.
     const wave = 1 + 0.35 * Math.exp(-(((this.mach - 1.02) / 0.15) ** 2));
-    const drag = 0.00125 * this.density * this.speed ** 2 * wave;
+    const drag = 0.00125 * perf.drag * this.density * this.speed ** 2 * wave;
     this.speed = MathUtils.clamp(
       this.speed +
         (thrust - drag - this.forward.y * 12 - Math.abs(control.pitch) * 2) *

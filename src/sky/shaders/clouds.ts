@@ -30,7 +30,8 @@ CloudWeather cloudWeather(vec2 xz) {
   vec4 big = texture(tWeather, (xz + uWeatherOffset) / 96000.0);
   vec4 local = texture(tWeather, (xz + uWeatherOffset * 1.15) / 34000.0 + vec2(0.31, 0.77));
   float systems = big.r;
-  float storm = smoothstep(0.8, 0.95, big.b) * uStorm;
+  // Stormier presets widen the storm systems as well as strengthening them.
+  float storm = smoothstep(0.8 - 0.4 * uStorm, 0.95 - 0.35 * uStorm, big.b) * uStorm;
   // Weather systems shift the local threshold, clustering cells into fields and clear lanes.
   float threshold = 0.92 - uCoverage * 0.62 + (0.5 - systems) * 0.38 - storm * 0.3;
   float x = local.g * 0.85 + local.a * 0.15;
@@ -123,6 +124,7 @@ uniform float uMaxSteps;
 uniform float uMaxDistance;
 uniform float uLightning;
 uniform vec3 uLightningPos;
+uniform float uRain;
 layout(location = 0) out vec4 outColor;
 layout(location = 1) out vec4 outDepth;
 
@@ -170,13 +172,13 @@ void main() {
   vec3 scattered = vec3(0.0);
   float transmittance = 1.0;
   float depthSum = 0.0, depthWeight = 0.0;
+  vec3 skyTop = texture(tSkyView, vec2(0.5, 1.0)).rgb * uSunIlluminance;
+  vec3 skyHorizon = (texture(tSkyView, vec2(0.25, 0.53)).rgb + texture(tSkyView, vec2(0.75, 0.53)).rgb) * 0.5 * uSunIlluminance;
+  vec3 skyAmbient = (skyTop * 0.6 + skyHorizon * 0.4) * 1.25;
+  float jitter = fract(ign(gl_FragCoord.xy + uOffset * 17.0) + uFrame * 0.61803398875);
   if (tEnd > tStart) {
     float cosSun = dot(rd, uSunDir);
-    vec3 skyTop = texture(tSkyView, vec2(0.5, 1.0)).rgb * uSunIlluminance;
-    vec3 skyHorizon = (texture(tSkyView, vec2(0.25, 0.53)).rgb + texture(tSkyView, vec2(0.75, 0.53)).rgb) * 0.5 * uSunIlluminance;
-    vec3 skyAmbient = (skyTop * 0.6 + skyHorizon * 0.4) * 1.25;
     vec3 sea = vec3(0.04, 0.07, 0.09) * uSunIlluminance * max(uSunDir.y, 0.0) * 0.12 + skyTop * 0.08;
-    float jitter = fract(ign(gl_FragCoord.xy + uOffset * 17.0) + uFrame * 0.61803398875);
     float t = tStart + clamp(40.0 + tStart * 0.006, 40.0, 500.0) * jitter;
     bool coarse = true;
     int zero = 0;
@@ -229,8 +231,10 @@ void main() {
       // 1.5× compensates for the octaves truncated from the multiple-scattering series.
       vec3 S = (sun * ms * powder * 1.5 + ambient) * sigmaT;
       if (uLightning > 0.0) {
+        // The discharge lights the cell from inside: inverse-square with a soft
+        // core, attenuated by the cloud it has to scatter through.
         float ld = distance(p, uLightningPos);
-        S += vec3(0.75, 0.82, 1.0) * uLightning * sigmaT * 4e6 / (ld * ld + 4e4) * exp(-ld * 0.0008);
+        S += vec3(0.75, 0.82, 1.0) * uLightning * sigmaT * 5e6 / (ld * ld + 1e6) * exp(-ld * 0.00025);
       }
       float sampleT = exp(-sigmaT * dt);
       scattered += transmittance * (S - S * sampleT) / max(sigmaT, 1e-7);
@@ -239,6 +243,56 @@ void main() {
       depthSum += t * (before - transmittance);
       depthWeight += before - transmittance;
       t += dt;
+    }
+  }
+  // Rain shafts hanging from cumulonimbus bases: a short march through the
+  // sub-cloud layer, composited in front of or behind the deck.
+  if (uRain > 0.0) {
+    float r0 = 0.0, r1 = 0.0;
+    if (hc < hb) r1 = hitBottom ? b1 * 1000.0 : 0.0;
+    else if (hitBottom && b0 > 0.0) { r0 = b0 * 1000.0; r1 = b1 * 1000.0; }
+    if (hitGround) r1 = min(r1, g0 * 1000.0);
+    r1 = min(min(r1, limit), r0 + 45000.0);
+    if (r1 > r0) {
+      const int RAIN_STEPS = 12;
+      float seg = (r1 - r0) / float(RAIN_STEPS);
+      float rainT = 1.0, rainDepth = 0.0, rainWeight = 0.0;
+      vec3 rainS = vec3(0.0);
+      vec3 planetC = vec3(0.0, 6360.0 + hc, 0.0);
+      for (int i = 0; i < RAIN_STEPS; i++) {
+        float t = r0 + (float(i) + jitter) * seg;
+        vec3 p = uCameraWorld + rd * t;
+        float h = curvedAltitude(camAlt, rd.y, t);
+        if (h > CLOUD_BOTTOM || h < 0.0) continue;
+        // Drops fall on a slant downwind of their cell.
+        vec2 q = p.xz - vec2(1.0, 0.3) * (CLOUD_BOTTOM - h) * 0.35;
+        CloudWeather w = cloudWeather(q);
+        float rain = smoothstep(0.5, 0.85, w.type) * smoothstep(0.3, 0.5, w.coverage);
+        if (rain <= 0.0) continue;
+        float curtain = texture(tShape, vec3(q.x, h * 0.3, q.y) / 2600.0 + uShapeOffset / 4600.0).g;
+        float sigma = rain * uRain * 1.3e-3 * smoothstep(0.3, 0.75, curtain);
+        float stepT = exp(-sigma * seg);
+        vec3 sun = sunTransmittance(tTransmittance, planetC + rd * (t * 0.001), uSunDir) * uSunIlluminance;
+        vec3 L = skyAmbient * 0.3 + sun * 0.025;
+        if (uLightning > 0.0) {
+          float ld = distance(p, uLightningPos);
+          L += vec3(0.75, 0.82, 1.0) * uLightning * 5e6 / (ld * ld + 1e6) * exp(-ld * 0.00025) * 0.08;
+        }
+        rainS += rainT * L * (1.0 - stepT);
+        rainDepth += t * rainT * (1.0 - stepT);
+        rainWeight += rainT * (1.0 - stepT);
+        rainT *= stepT;
+      }
+      // Below the deck the rain is in front of the clouds; from above it is behind them.
+      if (hc < hb) scattered = rainS + rainT * scattered;
+      else scattered += transmittance * rainS;
+      transmittance *= rainT;
+      // Rain only defines the layer's depth where there is no cloud: mixing it
+      // into cloud depth would break the depth-aware upsample at cloud edges.
+      if (depthWeight <= 1e-4 && rainWeight > 1e-4) {
+        depthSum = rainDepth;
+        depthWeight = rainWeight;
+      }
     }
   }
   float depth = depthWeight > 1e-4 ? depthSum / depthWeight : (tEnd > tStart ? tEnd : uMaxDistance);
