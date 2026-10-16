@@ -135,6 +135,8 @@ class Game {
   private damageEmitters = new Set<string>();
   private queryPoint = new T.Vector3();
   private nozzleWorld = new T.Vector3();
+  private flareForward = new T.Vector3();
+  private flareUp = new T.Vector3();
   private targetFollow = false;
   private mouseGun = false;
   private mouseSteering = false;
@@ -179,6 +181,7 @@ class Game {
     this.scene.environmentIntensity = 1;
     this.effects = new Effects(this.scene);
     this.effects.group.traverse((o) => o.layers.set(TRANSPARENT_LAYER));
+    this.effects.groundHeight = (x, z) => Math.max(0, renderedHeightAt(x, z));
     this.combatView = new CombatView(this.scene);
     this.combatView.group.traverse((o) => {
       if (o instanceof T.LineSegments) o.layers.set(TRANSPARENT_LAYER);
@@ -1192,8 +1195,13 @@ class Game {
           this.save();
         }
         if (this.flight.crashed) {
-          this.effects.emitExplosion(this.flight.position, 1.8);
-          this.audio.cue("explosion");
+          // A terrain impact throws dirt and burns; losing the jet to missiles is an air burst.
+          this.effects.emitExplosion(
+            this.flight.position,
+            1.8,
+            this.combat.playerHealth <= 0 ? "air" : "ground",
+          );
+          this.audio.cue("explosion", 0, 1.8);
           this.comms.clear();
           this.comms.say("crash", 1.6);
           el("crash-message").textContent =
@@ -1269,6 +1277,11 @@ class Game {
     this.combatView.update(this.combat, this.world.origin);
     this.updateCamera(dt);
     this.camera.updateMatrixWorld();
+    this.effects.setLighting(
+      this.sky.lightDirection,
+      this.world.sun.color,
+      this.world.sun.intensity,
+    );
     this.effects.update(
       this.state === "flight" ? dt : 0,
       this.camera,
@@ -1495,16 +1508,25 @@ class Game {
       } else if (event.type === "gun" || event.type === "missile") {
         if (event.player) this.audio.cue(event.type);
       } else if (event.type === "flare") {
-        this.effects.emitExplosion(event.position, 0.2);
+        // Cartridges leave the rear fuselage along the jet's body axes.
+        this.flareForward.set(0, 0, -1).applyQuaternion(this.flight.quaternion);
+        this.flareUp.set(0, 1, 0).applyQuaternion(this.flight.quaternion);
+        this.effects.emitFlares(
+          event.position,
+          this.flight.velocity,
+          this.flareForward,
+          this.flareUp,
+        );
         this.audio.cue("flare");
       } else if (event.type === "hit") {
         // `player` on a hit marks the player's jet as the one struck.
-        if (event.player) this.shakeAmount = this.settings.shake ? 0.8 : 0;
-        if (event.player && event.weapon === "missile") {
-          this.flight.damageEngine();
-          this.shakeAmount = this.settings.shake ? 1.4 : 0;
-        }
-        else if (event.entityId !== -1) this.hitUntil = this.time + 0.18;
+        if (event.player) {
+          this.shakeAmount = this.settings.shake ? 0.8 : 0;
+          if (event.weapon === "missile") {
+            this.flight.damageEngine();
+            this.shakeAmount = this.settings.shake ? 1.4 : 0;
+          }
+        } else if (event.entityId !== -1) this.hitUntil = this.time + 0.18;
       } else if (event.type === "complete" || event.type === "failed") {
         if (event.type === "complete") this.comms.say("clear", 0.8);
         else if (this.combat.status.result === "Transport lost") this.comms.say("escortLost", 0.8);
