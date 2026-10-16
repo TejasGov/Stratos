@@ -1,5 +1,6 @@
 import { Euler, Quaternion, Vector3, MathUtils } from "three";
 import { heightAt, renderedHeightAt } from "./world/terrain";
+import { insideStructure } from "./world/baseLayout";
 export interface Controls {
   pitch: number;
   roll: number;
@@ -293,13 +294,7 @@ export function sweptCollision(from: Vector3, to: Vector3) {
       z = MathUtils.lerp(from.z, to.z, t);
     if (Math.abs(x - 2500) < 347 && Math.abs(z + 500) < 23 && y > 53 && y < 82)
       return true;
-    for (let hangar = 0; hangar < 6; hangar++)
-      if (
-        Math.abs(x + 795) < 30 &&
-        Math.abs(z - (-300 + hangar * 115)) < 40 &&
-        y < 55
-      )
-        return true;
+    if (insideStructure(x, y, z)) return true;
     for (const [dx, dz] of [
       [0, 0],
       [-6, 0],

@@ -1,4 +1,30 @@
 import { SEED } from "./terrain";
+import { FUNNEL_FAR, FUNNEL_NEAR, PADS } from "./basePads";
+
+const num = (n: number) => (Number.isInteger(n) ? n.toFixed(1) : String(n));
+
+/**
+ * GLSL twin of applyPads() in terrain.ts, generated from the same PADS table.
+ * Kept to a transpilable subset (one `float` declaration per line) so
+ * tests/bases.test.ts can run it against the CPU version.
+ */
+export const APPLY_PADS_GLSL = /* glsl */ `
+float applyPads(float x, float z, float h) {
+${PADS.map((p, i) => `  float qx${i} = max(abs(x - ${num(p.x)}) - ${num(p.hx)}, 0.0);
+  float qz${i} = max(abs(z - ${num(p.z)}) - ${num(p.hz)}, 0.0);
+  float edge${i} = sqrt(qx${i} * qx${i} + qz${i} * qz${i});
+  float cap${i} = ${num(p.height)} + (qx${i} * ${num(p.slopeX)} + qz${i} * ${num(p.slopeZ)}) * (1.0 + (tNoise(x / 260.0, z / 260.0) - 0.5) * 0.5);
+  float gap${i} = max(40.0 - abs(h - cap${i}), 0.0);
+  float smin${i} = min(h, cap${i}) - gap${i} * gap${i} / 160.0;
+  float reachT${i} = clamp((edge${i} - ${num(FUNNEL_NEAR)}) / (${num(FUNNEL_FAR)} - ${num(FUNNEL_NEAR)}), 0.0, 1.0);
+  float reach${i} = 1.0 - reachT${i} * reachT${i} * (3.0 - 2.0 * reachT${i});
+  float carved${i} = h + reach${i} * (smin${i} - h);
+  float blend${i} = clamp(edge${i} / ${num(p.blend)}, 0.0, 1.0);
+  float core${i} = 1.0 - blend${i} * blend${i} * (3.0 - 2.0 * blend${i});
+  h = carved${i} + core${i} * (${num(p.height)} - carved${i});`).join("\n")}
+  return h;
+}
+`;
 
 /**
  * GLSL port of `heightAt` and `regionMasks` from terrain.ts. The integer hash
@@ -38,6 +64,7 @@ float terrainForest(float x, float z, float h, float slope, float moisture) {
     (1.0 - smoothstep(0.32, 0.55, slope)) * smoothstep(14.0, 45.0, h) *
     (1.0 - smoothstep(780.0, 1050.0, h));
 }
+${APPLY_PADS_GLSL}
 float terrainHeight(float x, float z) {
   float wx = x + (tNoise(x / 2400.0 + 3.0, z / 2400.0) - 0.5) * 1700.0 +
     (tNoise(x / 760.0, z / 760.0 + 11.0) - 0.5) * 520.0;
@@ -99,8 +126,6 @@ float terrainHeight(float x, float z) {
   h = h * (1.0 - port) + 22.0 * port;
   float channel = tEllipse(x, z, 2500.0, -500.0, 240.0, 850.0);
   h = h * (1.0 - channel) - 14.0 * channel;
-  float airfield = length(vec2((x + 900.0) / 400.0, z / 900.0));
-  float flatten = clamp((1.25 - airfield) * 3.0, 0.0, 1.0);
-  return h * (1.0 - flatten) + 28.0 * flatten;
+  return applyPads(x, z, h);
 }
 `;
