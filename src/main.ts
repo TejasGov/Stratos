@@ -84,7 +84,6 @@ class Game {
   private missileEmitters = new Set<string>();
   private damageEmitters = new Set<string>();
   private queryPoint = new T.Vector3();
-  private workerNotice = false;
   private targetFollow = false;
   private mouseGun = false;
   private mouseSteering = false;
@@ -783,17 +782,17 @@ class Game {
       drawing.y,
     );
     this.cameraGlobal.copy(this.camera.position).add(this.world.origin);
+    this.world.updateTerrain(this.renderer, this.cameraGlobal);
     this.sky.render(this.scene, this.camera, this.cameraGlobal, dt);
     if (!el("debug").hidden)
       el("debug").textContent =
-        `${this.fps.toFixed(0)} FPS\nFRAME median ${this.telemetry.median.toFixed(1)} / p95 ${this.telemetry.p95.toFixed(1)} ms\n${this.renderer.info.render.calls} draw calls\n${this.renderer.info.render.triangles.toLocaleString()} triangles\n${this.world.chunks.size} terrain chunks / ${this.world.stats.pending} pending\nINSTALL ${this.world.stats.uploadMilliseconds.toFixed(2)} ms / ${(this.world.stats.queuedBytes / 1024).toFixed(0)} KiB queued\n${this.effects.stats.smoke} smoke / ${this.effects.stats.flame} flame\n${this.physics?.status.colliders ?? 0} Rapier colliders\n${this.renderer.info.memory.geometries} geometries / ${this.renderer.info.memory.textures} textures\nORIGIN ${this.world.origin.x}, ${this.world.origin.z}`;
-    if (this.world.stats.workerFallback && !this.workerNotice) {
-      this.workerNotice = true;
-      this.toast(
-        "Terrain is using coarse coverage while generation recovers.",
-        "WORLD STREAMING",
-      );
-    } else if (!this.world.stats.workerFallback) this.workerNotice = false;
+        `${this.fps.toFixed(0)} FPS\nFRAME median ${this.telemetry.median.toFixed(1)} / p95 ${this.telemetry.p95.toFixed(1)} ms\n${this.renderer.info.render.calls} draw calls\n${this.renderer.info.render.triangles.toLocaleString()} triangles\n${this.world.stats.patches} terrain patches / ${this.world.stats.chunks} scenery chunks\n${this.effects.stats.smoke} smoke / ${this.effects.stats.flame} flame\n${this.physics?.status.colliders ?? 0} Rapier colliders\n${this.renderer.info.memory.geometries} geometries / ${this.renderer.info.memory.textures} textures\nORIGIN ${this.world.origin.x}, ${this.world.origin.z}`;
+  }
+  /** Development check that GPU terrain heights match the gameplay height function. */
+  terrainParity() {
+    return [0, 1, 2].map((level) =>
+      this.world.terrain.parity(this.renderer, level, heightAt),
+    );
   }
   /** Optional fixed camera in global coordinates, for screenshots and photo framing. */
   debugCamera?: { position: T.Vector3; target: T.Vector3; fov?: number };
@@ -804,6 +803,7 @@ class Game {
       this.look.copy(this.debugCamera.target).sub(this.world.origin);
       this.camera.lookAt(this.look);
       this.camera.fov = this.debugCamera.fov ?? 56;
+      this.updateClipPlanes();
       this.camera.updateProjectionMatrix();
       return;
     }
@@ -859,7 +859,14 @@ class Game {
         Math.sin(this.flight.elapsed * 73) * this.shakeAmount * 0.6;
       this.shakeAmount = T.MathUtils.damp(this.shakeAmount, 0, 7, dt);
     }
+    this.updateClipPlanes();
     this.camera.updateProjectionMatrix();
+  }
+  /** Far plane reaches the curved horizon plus mountains peeking above it. */
+  private updateClipPlanes() {
+    const altitude = Math.max(1, this.camera.position.y);
+    const horizon = Math.sqrt(2 * 6360000 * altitude) + 140000;
+    this.camera.far = T.MathUtils.clamp(horizon * 1.1, 80000, 900000);
   }
   private processCombatEvents() {
     for (const event of this.combat.drainEvents()) {

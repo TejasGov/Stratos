@@ -231,7 +231,8 @@ vec3 oceanShade(vec3 rd, float tOcean, vec3 sceneColor, float sceneDist, float r
 
 void main() {
   vec2 uv = vUv;
-  vec3 scene = texture(tScene, uv).rgb;
+  vec4 sceneSample = texture(tScene, uv);
+  vec3 scene = sceneSample.rgb;
   float depth = texture(tDepth, uv).x;
   vec4 ray = uRayMatrix * vec4(uv * 2.0 - 1.0, 1.0, 1.0);
   vec3 rd = normalize(ray.xyz / ray.w);
@@ -239,6 +240,9 @@ void main() {
   vec3 viewPos = view.xyz / view.w;
   bool geometry = depth < 1.0;
   float sceneDist = geometry ? length(viewPos) : 1e9;
+  // Terrain flags its below-sea-level fragments with alpha 0: robust at any range,
+  // unlike comparing reconstructed depth with the ocean distance.
+  bool underwater = geometry && sceneSample.a < 0.5;
   float alt = max(uCameraGlobal.y, 0.5);
   float r = 6360.0 + alt * 0.001;
   // Curved sea surface: stable near root of the sphere at planet radius.
@@ -253,9 +257,9 @@ void main() {
   vec3 color;
   float outDepth = depth;
   vec3 inscatter, trans;
-  if (tOcean > 0.0 && tOcean < sceneDist) {
+  if (tOcean > 0.0 && (tOcean < sceneDist || underwater)) {
     bool seabed;
-    vec3 water = oceanShade(rd, tOcean, scene, sceneDist, r, seabed);
+    vec3 water = oceanShade(rd, tOcean, scene, max(sceneDist, tOcean + 0.5), r, seabed);
     vec3 hit = vec3(uCameraGlobal.x, 0.0, uCameraGlobal.z) + rd * tOcean;
     vec2 suv = (hit.xz - uShadowCenter) / uShadowExtent + 0.5;
     float shade = texture(tCloudShadow, clamp(suv, 0.0, 1.0)).r;
@@ -271,7 +275,7 @@ void main() {
     float shade = texture(tCloudShadow, clamp(suv, 0.0, 1.0)).r;
     float inside = (1.0 - smoothstep(0.38, 0.5, max(abs(suv.x - 0.5), abs(suv.y - 0.5)))) * step(world.y, 1300.0);
     scene *= mix(1.0, 0.3 + 0.7 * shade, inside);
-    surfacePerspective(uv, rd, sceneDist, false, inscatter, trans);
+    surfacePerspective(uv, rd, sceneDist, true, inscatter, trans);
     color = scene * trans + inscatter * uSunIlluminance;
   } else {
     color = texture(tSkyView, skyViewUv(rd, uSunDir, r)).rgb * uSunIlluminance;
@@ -304,7 +308,9 @@ void main() {
     vec2 dinfo = texelFetch(tCloudDepth, p, 0).xy;
     float bil = (i == 0 ? 1.0 - f.x : f.x) * (j == 0 ? 1.0 - f.y : f.y);
     float lim = dinfo.y * 1000.0;
-    float similarity = 1.0 / (1e-3 + abs(min(refDist, 1.6e5) - min(lim, 1.6e5)) / max(min(refDist, 1.6e5), 1.0));
+    // Soft depth similarity: a hard 1/x weight degenerates into blocky nearest-texel picks.
+    float rel = abs(min(refDist, 1.6e5) - min(lim, 1.6e5)) / max(min(refDist, 1.6e5), 1.0);
+    float similarity = exp(-rel * 6.0);
     float w = bil * similarity + 1e-5;
     cloud += c * w;
     cloudDepth += dinfo.x * 1000.0 * w;

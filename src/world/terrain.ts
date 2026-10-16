@@ -21,7 +21,7 @@ function ellipse(
 export function regionMasks(x: number, z: number) {
   const valleyCenter = 180 + Math.sin((z + 900) / 1100) * 370;
   const drainage =
-    Math.exp(-(((x - valleyCenter) / 240) ** 2)) *
+    Math.exp(-(((x - valleyCenter) / 380) ** 2)) *
     ellipse(x, z, 250, -1200, 1700, 2700);
   const infrastructure = Math.max(
     ellipse(x, z, -900, 0, 650, 1250),
@@ -32,7 +32,7 @@ export function regionMasks(x: number, z: number) {
   );
   return { drainage, infrastructure, moisture };
 }
-function noise(x: number, z: number) {
+export function noise(x: number, z: number) {
   const ix = Math.floor(x),
     iz = Math.floor(z),
     u = smooth(x - ix),
@@ -44,25 +44,73 @@ function noise(x: number, z: number) {
   return (a + (b - a) * u) * (1 - v) + (c + (d - c) * u) * v;
 }
 export function heightAt(x: number, z: number): number {
+  // Domain warp shared by every island: irregular coasts, bays and capes.
+  const wx =
+    x +
+    (noise(x / 2400 + 3, z / 2400) - 0.5) * 1700 +
+    (noise(x / 760, z / 760 + 11) - 0.5) * 520;
+  const wz =
+    z +
+    (noise(x / 2400, z / 2400 + 7) - 0.5) * 1700 +
+    (noise(x / 760 + 5, z / 760) - 0.5) * 520;
   const cell = 6200,
     cx = Math.round(x / cell),
     cz = Math.round(z / cell);
-  let island = 0;
+  let island = 0,
+    shelf = 0;
   for (let dz = -1; dz <= 1; dz++)
     for (let dx = -1; dx <= 1; dx++) {
       const ix = cx + dx,
         iz = cz + dz;
+      const home = ix === 0 && iz === 0;
+      const landmark = home || (ix === 0 && iz === -1) || (ix === -1 && iz === 0);
+      if (!landmark && hash(ix + 71, iz - 5) < 0.2) continue;
       const px = ix * cell + (hash(ix + 11, iz) - 0.5) * 1800;
       const pz = iz * cell + (hash(ix, iz + 53) - 0.5) * 1800;
-      const rx = 2200 + hash(ix + 3, iz) * 900,
-        rz = 1800 + hash(ix, iz + 8) * 1000;
-      const r = ((x - px) / rx) ** 2 + ((z - pz) / rz) ** 2;
-      island = Math.max(island, Math.max(0, 1 - r) ** 1.5);
+      let size = 0.5 + 1.3 * hash(ix + 29, iz + 3) ** 2,
+        elongation = 0.6 + 0.9 * hash(ix + 13, iz + 29),
+        angle = hash(ix + 5, iz + 41) * Math.PI;
+      if (home) {
+        size = 1.25;
+        elongation = 1;
+        angle = 0;
+      } else if (landmark) size = Math.max(size, 0.95);
+      // Radii stay inside the 3×3 cell search window, avoiding straight cut-offs.
+      const rx = Math.min(5000, (2200 + hash(ix + 3, iz) * 900) * size * elongation);
+      const rz = Math.min(5000, ((1800 + hash(ix, iz + 8) * 1000) * size) / elongation);
+      const c = Math.cos(angle),
+        s = Math.sin(angle);
+      const qx = ((wx - px) * c - (wz - pz) * s) / rx,
+        qz = ((wx - px) * s + (wz - pz) * c) / rz;
+      const r = qx * qx + qz * qz;
+      const peak = home ? 1 : 0.4 + 0.6 * hash(ix - 7, iz + 13);
+      island = Math.max(island, Math.max(0, 1 - r) ** 1.5 * peak);
+      // Shallow lagoon shelf around the coast, of varying width.
+      const width = 1.6 * (0.4 + 0.6 * hash(ix + 37, iz - 11));
+      shelf = Math.max(shelf, smooth(clamp((1 + width - r) / width)));
+    }
+  // Islets and reef shoals on a finer lattice.
+  const cell2 = 2300,
+    ix2 = Math.round(x / cell2),
+    iz2 = Math.round(z / cell2);
+  for (let dz = -1; dz <= 1; dz++)
+    for (let dx = -1; dx <= 1; dx++) {
+      const ix = ix2 + dx,
+        iz = iz2 + dz;
+      if (hash(ix + 201, iz + 17) >= 0.22) continue;
+      const px = ix * cell2 + (hash(ix + 19, iz) - 0.5) * 1300;
+      const pz = iz * cell2 + (hash(ix, iz + 23) - 0.5) * 1300;
+      const radius = 220 + hash(ix + 9, iz + 2) * 480;
+      const r = ((wx - px) ** 2 + (wz - pz) ** 2) / (radius * radius);
+      island = Math.max(island, Math.max(0, 1 - r) ** 1.2 * 0.2);
+      shelf = Math.max(shelf, smooth(clamp((3.2 - r) / 2.2)) * 0.9);
     }
   const large = noise(x / 1600, z / 1600),
     ridge = 1 - Math.abs(noise(x / 630 + 17, z / 630) * 2 - 1);
+  const reef = (noise(x / 140 + 2, z / 140) - 0.5) * 10;
   let h =
     -95 +
+    shelf * (84 + reef) +
     island * (440 + large * 900 + ridge ** 3 * 380) +
     island * (noise(x / 180, z / 180) - 0.5) * 80;
   // Authored Haven basin: winding mountain corridor opening onto an eastern shelf.
@@ -72,9 +120,9 @@ export function heightAt(x: number, z: number): number {
     Math.exp(-(((x + 250) / 1050) ** 2)) *
     Math.exp(-(((z + 1750) / 1900) ** 2));
   const masks = regionMasks(x, z);
-  h += influence * (spine * 510 - masks.drainage * 330);
-  const shelf = ellipse(x, z, 1870, -1050, 900, 1150);
-  h = h * (1 - shelf) + (26 + noise(x / 350, z / 350) * 20) * shelf;
+  h += influence * (spine * 510 - masks.drainage * 250);
+  const portShelf = ellipse(x, z, 1870, -1050, 900, 1150);
+  h = h * (1 - portShelf) + (26 + noise(x / 350, z / 350) * 20) * portShelf;
   const port = ellipse(x, z, 1850, -1050, 390, 500);
   h = h * (1 - port) + 22 * port;
   // Keep the bridge spanning a channel rather than buried inside a ridge.
@@ -84,6 +132,30 @@ export function heightAt(x: number, z: number): number {
   const flatten = Math.max(0, Math.min(1, (1.25 - airfieldDistance) * 3));
   h = h * (1 - flatten) + 28 * flatten;
   return h;
+}
+/**
+ * Forest density shared by tree placement and the GPU canopy shading
+ * (`terrainForest` in terrainGlsl.ts mirrors this exactly).
+ */
+export function forestMask(
+  x: number,
+  z: number,
+  h: number,
+  slope: number,
+  moisture: number,
+) {
+  const macro = noise(x / 1400 + 31, z / 1400);
+  const mid = noise(x / 260 + 9, z / 260);
+  const smooth01 = (e0: number, e1: number, v: number) => {
+    const t = clamp((v - e0) / (e1 - e0));
+    return t * t * (3 - 2 * t);
+  };
+  return (
+    smooth01(0.42, 0.62, moisture + (macro - 0.5) * 0.55 + (mid - 0.5) * 0.25) *
+    (1 - smooth01(0.32, 0.55, slope)) *
+    smooth01(14, 45, h) *
+    (1 - smooth01(780, 1050, h))
+  );
 }
 export function surfaceColor(
   h: number,

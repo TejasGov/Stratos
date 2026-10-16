@@ -85,6 +85,9 @@ export class Clouds {
   readonly lightning = { intensity: 0, position: new T.Vector3() };
   private density: Record<string, T.IUniform>;
   constructor(atmosphere: Atmosphere, private depth: T.DepthTexture) {
+    // Colour is reconstructed bilinearly between traced texels; depth stays nearest.
+    const marchColor = this.march.textures[0];
+    marchColor.minFilter = marchColor.magFilter = T.LinearFilter;
     const cameraWorld = new T.Vector3();
     this.density = {
       tWeather: { value: this.weather.texture },
