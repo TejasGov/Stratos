@@ -1040,3 +1040,91 @@ body[data-photo] .vignette {
     box-shadow: 0 0 0 100vmax #ffffff00;
   }
 }
+/* Haven Control radio subtitles */
+.comms {
+  position: fixed;
+  left: 50%;
+  bottom: 11vh;
+  z-index: 11;
+  display: none;
+  align-items: flex-start;
+  gap: 14px;
+  width: max-content;
+  max-width: min(560px, 62vw);
+  padding: 12px 18px 13px 14px;
+  background: #0f2a2ed9;
+  border: 1px solid #d5ed9040;
+  border-left: 2px solid var(--acid);
+  opacity: 0;
+  transform: translate(-50%, 6px);
+  transition:
+    opacity 0.25s,
+    transform 0.25s;
+  pointer-events: none;
+}
+body[data-state="flight"] .comms,
+body[data-state="paused"] .comms,
+body[data-state="crashed"] .comms {
+  display: flex;
+}
+body[data-photo] .comms {
+  display: none;
+}
+.comms.on {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+.comms .eyebrow {
+  display: block;
+  font-size: 8px;
+  color: var(--acid);
+}
+.comms p {
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #eef8e7;
+}
+.comms-signal {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 14px;
+  margin-top: 1px;
+}
+.comms-signal i {
+  width: 3px;
+  height: 100%;
+  background: var(--acid);
+  transform-origin: bottom;
+  transform: scaleY(0.25);
+}
+.comms.on .comms-signal i {
+  animation: comms-level 0.5s ease-in-out infinite alternate;
+}
+.comms.on .comms-signal i:nth-child(2) {
+  animation-delay: -0.15s;
+}
+.comms.on .comms-signal i:nth-child(3) {
+  animation-delay: -0.32s;
+}
+.comms.on .comms-signal i:nth-child(4) {
+  animation-delay: -0.08s;
+}
+@keyframes comms-level {
+  to {
+    transform: scaleY(1);
+  }
+}
+@media (max-width: 600px) {
+  .comms {
+    bottom: 250px;
+    max-width: calc(100vw - 32px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .comms.on .comms-signal i {
+    animation: none;
+    transform: scaleY(0.7);
+  }
+}

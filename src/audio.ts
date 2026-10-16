@@ -37,6 +37,9 @@ export class FlightAudio {
   private loops: Partial<Record<LoopName, Loop>> = {};
   private gun?: { source: AudioBufferSourceNode; gain: GainNode };
   private lastGun = 0;
+  private radioInput?: AudioNode;
+  /** 0..1: lowers the engine and wind beds while someone is talking. */
+  duck = 0;
   enabled = true;
   /** Sonic boom: a sharp double crack followed by a long rolling rumble. */
   boom() {
@@ -125,6 +128,32 @@ export class FlightAudio {
       source.onended = () => {
         source.disconnect();
         filter.disconnect();
+        gain.disconnect();
+      };
+    }
+  }
+  /** Ground-proximity alarm: the jet's own two rising "whoops". */
+  terrainAlarm() {
+    if (!this.ready()) return;
+    const ctx = this.context!;
+    const now = ctx.currentTime;
+    for (const delay of [0, 0.42]) {
+      const at = now + delay;
+      const tone = ctx.createOscillator();
+      tone.type = "triangle";
+      tone.frequency.setValueAtTime(380, at);
+      tone.frequency.exponentialRampToValueAtTime(1150, at + 0.32);
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0, at);
+      gain.gain.linearRampToValueAtTime(0.06, at + 0.03);
+      gain.gain.setValueAtTime(0.06, at + 0.28);
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.36);
+      tone.connect(gain);
+      gain.connect(this.master!);
+      tone.start(at);
+      tone.stop(at + 0.38);
+      tone.onended = () => {
+        tone.disconnect();
         gain.disconnect();
       };
     }
@@ -227,6 +256,69 @@ export class FlightAudio {
       this.loadSamples();
     }
     await this.context.resume();
+  }
+  /** Decodes an audio file with this context (voice lines, extra layers). */
+  async decode(url: string) {
+    if (!this.context) return undefined;
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`${url}: ${response.status}`);
+    return this.context.decodeAudioData(await response.arrayBuffer());
+  }
+  /**
+   * Radio voice chain: band-limited to the 300 Hz–3.4 kHz of a comms channel,
+   * lightly saturated, with a touch of presence. Created on first use.
+   */
+  radio() {
+    if (!this.context || !this.master) return undefined;
+    if (!this.radioInput) {
+      const ctx = this.context;
+      const highpass = ctx.createBiquadFilter();
+      highpass.type = "highpass";
+      highpass.frequency.value = 320;
+      const lowpass = ctx.createBiquadFilter();
+      lowpass.type = "lowpass";
+      lowpass.frequency.value = 3400;
+      const presence = ctx.createBiquadFilter();
+      presence.type = "peaking";
+      presence.frequency.value = 1800;
+      presence.gain.value = 4;
+      const drive = ctx.createWaveShaper();
+      const curve = new Float32Array(1024);
+      for (let i = 0; i < curve.length; i++) {
+        const x = (i / (curve.length - 1)) * 2 - 1;
+        curve[i] = Math.tanh(x * 2.2) / Math.tanh(2.2);
+      }
+      drive.curve = curve;
+      const gain = ctx.createGain();
+      gain.gain.value = 0.85;
+      highpass.connect(lowpass);
+      lowpass.connect(presence);
+      presence.connect(drive);
+      drive.connect(gain);
+      gain.connect(this.master);
+      this.radioInput = highpass;
+    }
+    return { context: this.context, input: this.radioInput };
+  }
+  /** Push-to-talk click: a short burst of band-limited static. */
+  squelch(at: number, level = 0.25) {
+    const radio = this.radio();
+    if (!radio || !this.noise) return;
+    const ctx = radio.context;
+    const source = ctx.createBufferSource();
+    source.buffer = this.noise;
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0, at);
+    gain.gain.linearRampToValueAtTime(level, at + 0.005);
+    gain.gain.exponentialRampToValueAtTime(0.001, at + 0.09);
+    source.connect(gain);
+    gain.connect(radio.input);
+    source.start(at, Math.random() * 2);
+    source.stop(at + 0.1);
+    source.onended = () => {
+      source.disconnect();
+      gain.disconnect();
+    };
   }
   /** Fetches and decodes the recorded layers in the background. */
   private loadSamples() {
@@ -334,9 +426,10 @@ export class FlightAudio {
     }
     // Past Mach 1 the engine noise trails behind the aircraft: muffle it.
     const muffle = mach > 1 ? 1 : 0;
+    const bed = 1 - 0.5 * this.duck;
     const { engine, afterburner, wind: windLoop, rain: rainLoop } = this.loops;
     if (engine) {
-      engine.gain.gain.setTargetAtTime(on ? 0.16 + throttle * 0.22 : 0, t, 0.2);
+      engine.gain.gain.setTargetAtTime(on ? (0.16 + throttle * 0.22) * bed : 0, t, 0.2);
       engine.source.playbackRate.setTargetAtTime(0.82 + throttle * 0.3 + Math.min(speed, 700) / 2800, t, 0.3);
       engine.filter.frequency.setTargetAtTime(muffle ? 700 : 9000, t, 0.4);
       this.gain.gain.setTargetAtTime(0, t, 0.1);
@@ -344,7 +437,7 @@ export class FlightAudio {
       this.gain.gain.setTargetAtTime(on ? 0.018 + throttle * 0.022 : 0, t, 0.15);
     this.oscillator.frequency.setTargetAtTime(36 + throttle * 40 + speed * 0.12, t, 0.15);
     if (afterburner) {
-      afterburner.gain.gain.setTargetAtTime(on && boost ? 0.42 : 0, t, 0.25);
+      afterburner.gain.gain.setTargetAtTime(on && boost ? 0.42 * bed : 0, t, 0.25);
       afterburner.filter.frequency.setTargetAtTime(muffle ? 500 : 12000, t, 0.4);
       this.roar?.gain.setTargetAtTime(0, t, 0.1);
     } else if (this.roar && this.roarFilter) {
@@ -352,7 +445,7 @@ export class FlightAudio {
       this.roarFilter.frequency.setTargetAtTime(muffle ? 160 : 520, t, 0.4);
     }
     if (windLoop) {
-      windLoop.gain.gain.setTargetAtTime(on ? Math.min(0.42, speed / 1300) : 0, t, 0.2);
+      windLoop.gain.gain.setTargetAtTime(on ? Math.min(0.42, speed / 1300) * bed : 0, t, 0.2);
       windLoop.source.playbackRate.setTargetAtTime(0.75 + Math.min(speed, 700) / 1400, t, 0.3);
       this.wind.gain.setTargetAtTime(0, t, 0.1);
     } else this.wind.gain.setTargetAtTime(on ? Math.min(0.28, speed / 1200) : 0, t, 0.2);
