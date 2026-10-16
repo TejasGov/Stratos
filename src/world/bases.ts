@@ -43,6 +43,21 @@ export const BLACKRIDGE: Base = {
 
 export const BASES = [HAVEN, BLACKRIDGE];
 
+export interface StrikeTarget {
+  id: string;
+  name: string;
+  kind: "radar" | "fuel" | "shelters";
+  x: number;
+  z: number;
+}
+
+/** Destroyable installations at Blackridge; the radar is the strike objective. */
+export const BLACKRIDGE_TARGETS: StrikeTarget[] = [
+  { id: "radar", name: "Blackridge radar", kind: "radar", x: 300, z: -8080 },
+  { id: "fuel", name: "Fuel depot", kind: "fuel", x: -450, z: -8130 },
+  { id: "shelters", name: "Aircraft shelters", kind: "shelters", x: 0, z: -8170 },
+];
+
 export type SamType = "shorad" | "mrsam";
 
 export interface SamSite {
