@@ -11,6 +11,7 @@ import { FlightAudio } from "./audio";
 import { createUI, el } from "./ui";
 import { Hud } from "./ui/Hud";
 import { FrameTelemetry } from "./render/FrameTelemetry";
+import { DynamicResolution } from "./render/DynamicResolution";
 import {
   FlightInput,
   type CombatAction,
@@ -55,6 +56,7 @@ interface Save {
   weather?: WeatherName;
   ascentBest?: number;
   aircraft?: string;
+  dynamicResolution?: boolean;
 }
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 createUI();
@@ -95,7 +97,9 @@ class Game {
     hours: 17.6,
     weather: "fair" as WeatherName,
     aircraft: "sf35",
+    dynamicResolution: true,
   };
+  private resolution = new DynamicResolution();
   /** Ascent challenge: climb from the sea to 30 km against the clock. */
   ascent = { active: false, done: false, time: 0, best: undefined as number | undefined };
   private showcaseTime = 0;
@@ -163,7 +167,7 @@ class Game {
       if (o instanceof T.LineSegments) o.layers.set(TRANSPARENT_LAYER);
     });
     this.physicsReady = import("./physics/CollisionWorld")
-      .then(({ CollisionWorld }) => CollisionWorld.create(renderedHeightAt))
+      .then(({ CollisionWorld }) => CollisionWorld.create(heightAt))
       .then((physics) => {
         this.physics = physics;
       });
@@ -300,11 +304,13 @@ class Game {
     }
   }
   /** Hostile fighters come from the rest of the fleet (never the player's own type). */
+  private adversaryToken = 0;
   private async loadAdversaries() {
     const ids = ["su57", "j20", "su30", "f22"].filter((id) => id !== this.airframe.id).slice(0, 3);
+    const token = ++this.adversaryToken;
     try {
       const models = await Promise.all(ids.map((id) => this.loadModel(airframe(id))));
-      this.combatView.setEnemyTemplates(models);
+      if (token === this.adversaryToken) this.combatView.setEnemyTemplates(models);
     } catch {
       // Enemies fall back to the player's model.
     }
@@ -314,10 +320,12 @@ class Game {
       const chosen = airframe(this.settings.aircraft);
       this.airframe = chosen;
       this.syncHangar();
+      const token = this.hangarToken;
       const model = await this.loadModel(chosen, (fraction) => {
         el("load-progress").style.width = `${Math.min(95, fraction * 95)}%`;
       });
-      this.applyAirframe(chosen, model);
+      // The hangar may already have moved on (and applied its own choice).
+      if (token === this.hangarToken) this.applyAirframe(chosen, model);
       await this.physicsReady;
       await this.world.materialsReady;
       if (this.world.materialError)
@@ -424,6 +432,7 @@ class Game {
       .forEach((button) => {
         button.onclick = () => this.startAscent();
       });
+    this.bindPhoto();
     el("hangar-prev").onclick = () => this.selectAircraft(-1);
     el("hangar-next").onclick = () => this.selectAircraft(1);
     document.querySelectorAll<HTMLButtonElement>("#time-chips button").forEach((button) => {
@@ -513,6 +522,12 @@ class Game {
       this.syncSettings();
       this.save();
     };
+    el<HTMLInputElement>("dynres-setting").onchange = (e) => {
+      this.settings.dynamicResolution = (e.target as HTMLInputElement).checked;
+      this.resolution.reset();
+      this.applyQuality();
+      this.save();
+    };
     el<HTMLInputElement>("debug-setting").onchange = (e) => {
       el("debug").hidden = !(e.target as HTMLInputElement).checked;
     };
@@ -523,7 +538,17 @@ class Game {
     });
     window.addEventListener("keydown", (e) => {
       if (document.querySelector("dialog[open]")) return;
+      if (e.code === "KeyP" && !e.repeat && this.loaded) {
+        if (this.photo) this.exitPhoto();
+        else if (this.state === "flight" || this.state === "menu" || this.state === "paused")
+          this.enterPhoto();
+        return;
+      }
       if (e.code === "Escape") {
+        if (this.photo) {
+          this.exitPhoto();
+          return;
+        }
         if (this.state === "flight") this.pause();
         else if (this.state === "paused") this.resume();
         return;
@@ -638,9 +663,7 @@ class Game {
       this.flight.previous.copy(this.flight.position);
     } else if (fromShowcase) {
       // Take off straight out of the title cinematic: same jet, same sky.
-      this.flight.previous.copy(this.flight.position);
-      this.flight.previousQuaternion.copy(this.flight.quaternion);
-      this.flight.crashed = false;
+      this.flight.resetDynamics();
     } else this.flight.reset();
     if (combatMission) this.combat.start(combatMission, this.flight);
     this.cameraReady = fromShowcase;
@@ -701,9 +724,7 @@ class Game {
     const sunHeading = Math.atan2(-sun.x, -sun.z);
     // By day the sun sits behind the camera's right shoulder and rakes across
     // the jet and the cumulus; in twilight the camera turns into the afterglow.
-    const angle =
-      this.showcaseSunAngle ??
-      T.MathUtils.lerp(-1.13, 1.1, T.MathUtils.smoothstep(sun.y, -0.02, 0.1));
+    const angle = T.MathUtils.lerp(-1.13, 1.1, T.MathUtils.smoothstep(sun.y, -0.02, 0.1));
     const yaw = sunHeading + angle + Math.sin(t * 0.045) * 0.3;
     const turnRate = Math.cos(t * 0.045) * 0.3 * 0.045;
     const f = this.flight;
@@ -745,31 +766,39 @@ class Game {
   private approachStorm() {
     const f = this.flight;
     const clouds = this.sky.clouds;
+    const heading = Math.atan2(f.velocity.x, f.velocity.z);
+    const dx = Math.sin(heading),
+      dz = Math.cos(heading);
+    // The approach must stay low over the sea or low islands: the showcase
+    // flies beneath the 1.25 km cloud base.
+    const lowRun = (x: number, z: number) => {
+      for (let d = -4000; d <= 9000; d += 1000)
+        if (heightAt(x + dx * d, z + dz * d) > 450) return false;
+      return true;
+    };
     let best: { x: number; z: number } | undefined;
-    for (let r = 2000; r <= 60000 && !best; r += 2000)
+    for (let r = 2000; r <= 70000 && !best; r += 2000)
       for (let k = 0, n = Math.ceil((2 * Math.PI * r) / 2000); k < n; k++) {
         const a = (k / n) * Math.PI * 2;
         const x = f.position.x + Math.cos(a) * r,
           z = f.position.z + Math.sin(a) * r;
-        if (clouds.weatherAt(x, z).type > 0.75) {
+        if (clouds.weatherAt(x, z).type > 0.75 && lowRun(x, z)) {
           best = { x, z };
           break;
         }
       }
     if (!best) return;
-    const heading = Math.atan2(f.velocity.x, f.velocity.z);
-    f.position.x = best.x - Math.sin(heading) * 3500;
-    f.position.z = best.z - Math.cos(heading) * 3500;
+    f.position.x = best.x - dx * 3500;
+    f.position.z = best.z - dz * 3500;
+    f.position.y = Math.max(800, heightAt(f.position.x, f.position.z) + 320);
     f.previous.copy(f.position);
     this.showcaseStarted = true;
-    this.showcaseAltitude = 800;
+    this.showcaseAltitude = f.position.y;
     this.sky.clouds.invalidate();
     this.sky.lightning.soon(1.5);
     this.cameraReady = false;
   }
   private showcaseAltitude = 0;
-  /** Optional fixed showcase heading relative to the sun (radians, positive = sun on the right). */
-  showcaseSunAngle?: number;
   private showcaseEuler = new T.Euler();
   private menuYaw = new T.Quaternion();
   private menuAxis = new T.Vector3(0, 1, 0);
@@ -786,6 +815,133 @@ class Game {
     document.querySelectorAll<HTMLButtonElement>("#weather-chips button").forEach((b) => {
       b.setAttribute("aria-pressed", String(b.dataset.weather === this.settings.weather));
     });
+  }
+  // Photo mode: the simulation holds still while the camera orbits the jet.
+  private photo = false;
+  private photoReturn: "menu" | "flight" = "flight";
+  private photoOrbit = { yaw: 0, pitch: 0.12, distance: 38 };
+  private photoFov = 50;
+  private photoSaved = { hours: 0, weather: "fair" as WeatherName };
+  private captureNext = false;
+  private enterPhoto() {
+    if (this.photo || !this.loaded) return;
+    this.photoReturn = this.state === "menu" ? "menu" : "flight";
+    const rel = this.camera.position.clone().sub(this.local);
+    const distance = Math.max(1, rel.length());
+    this.photoOrbit.distance = T.MathUtils.clamp(distance, 10, 400);
+    this.photoOrbit.yaw = Math.atan2(rel.x, rel.z);
+    this.photoOrbit.pitch = Math.asin(T.MathUtils.clamp(rel.y / distance, -0.9, 0.9));
+    this.photoFov = this.camera.fov;
+    this.photoSaved = { hours: this.sky.time.hours, weather: this.sky.weather };
+    this.photo = true;
+    this.setState("paused");
+    el("pause").hidden = true;
+    el("photo").hidden = false;
+    document.body.dataset.photo = "true";
+    this.sky.clouds.converge = 2;
+    // Captures are taken at full resolution.
+    this.resolution.reset();
+    this.applyQuality();
+    this.syncPhoto();
+  }
+  private exitPhoto() {
+    if (!this.photo) return;
+    this.photo = false;
+    el("photo").hidden = true;
+    delete document.body.dataset.photo;
+    this.sky.exposureBias = 0;
+    this.sky.clouds.converge = 1;
+    this.sky.lightning.clear();
+    this.sky.time.hours = this.photoSaved.hours;
+    if (this.sky.weather !== this.photoSaved.weather) this.sky.setWeather(this.photoSaved.weather);
+    this.plane.visible = true;
+    this.cameraReady = false;
+    if (this.photoReturn === "menu") this.setState("menu");
+    else this.setState("paused");
+  }
+  private syncPhoto() {
+    const hours = this.sky.time.hours;
+    el<HTMLInputElement>("photo-time").value = String(hours);
+    el("photo-time-out").textContent = `${String(Math.floor(hours)).padStart(2, "0")}:${String(Math.floor((hours % 1) * 60)).padStart(2, "0")}`;
+    el<HTMLInputElement>("photo-exposure").value = String(this.sky.exposureBias);
+    el("photo-exposure-out").textContent = `${this.sky.exposureBias >= 0 ? "+" : ""}${this.sky.exposureBias.toFixed(1)} EV`;
+    el<HTMLInputElement>("photo-fov").value = String(Math.round(this.photoFov));
+    // Full-frame equivalent focal length for the vertical field of view.
+    el("photo-fov-out").textContent = `${Math.round(12 / Math.tan(T.MathUtils.degToRad(this.photoFov) / 2))} mm`;
+    document.querySelectorAll<HTMLButtonElement>("#photo-weather button").forEach((b) => {
+      b.setAttribute("aria-pressed", String(b.dataset.photoWeather === this.sky.weather));
+    });
+    el("photo-aircraft").setAttribute("aria-pressed", String(this.plane.visible));
+  }
+  /** Freezes a strike in front of the camera, a few kilometres out. */
+  private photoLightning() {
+    const direction = this.camera.getWorldDirection(new T.Vector3());
+    const side = Math.random() < 0.5 ? -1 : 1;
+    const distance = 5000 + Math.random() * 4000;
+    const lateral = side * (800 + Math.random() * 2200);
+    const x = this.cameraGlobal.x + direction.x * distance - direction.z * lateral,
+      z = this.cameraGlobal.z + direction.z * distance + direction.x * lateral;
+    this.sky.lightning.clear();
+    this.sky.lightning.strike(x, z, this.cameraGlobal);
+  }
+  private bindPhoto() {
+    el("photo-button").onclick = () => this.enterPhoto();
+    el("photo-exit").onclick = () => this.exitPhoto();
+    el("photo-capture").onclick = () => {
+      this.captureNext = true;
+      const panel = el("photo");
+      panel.classList.remove("flash");
+      void panel.offsetWidth;
+      panel.classList.add("flash");
+    };
+    el("photo-lightning").onclick = () => this.photoLightning();
+    el("photo-aircraft").onclick = () => {
+      this.plane.visible = !this.plane.visible;
+      this.syncPhoto();
+    };
+    el<HTMLInputElement>("photo-time").oninput = (e) => {
+      this.sky.time.hours = Number((e.target as HTMLInputElement).value);
+      this.syncPhoto();
+    };
+    el<HTMLInputElement>("photo-exposure").oninput = (e) => {
+      this.sky.exposureBias = Number((e.target as HTMLInputElement).value);
+      this.syncPhoto();
+    };
+    el<HTMLInputElement>("photo-fov").oninput = (e) => {
+      this.photoFov = Number((e.target as HTMLInputElement).value);
+      this.syncPhoto();
+    };
+    document.querySelectorAll<HTMLButtonElement>("#photo-weather button").forEach((button) => {
+      button.onclick = () => {
+        this.sky.setWeather(button.dataset.photoWeather as WeatherName);
+        this.syncPhoto();
+      };
+    });
+    const canvas = this.renderer.domElement;
+    let dragging: { x: number; y: number } | undefined;
+    canvas.addEventListener("pointerdown", (e) => {
+      if (!this.photo) return;
+      dragging = { x: e.clientX, y: e.clientY };
+      canvas.setPointerCapture(e.pointerId);
+    });
+    canvas.addEventListener("pointermove", (e) => {
+      if (!this.photo || !dragging) return;
+      const o = this.photoOrbit;
+      o.yaw -= (e.clientX - dragging.x) * 0.006;
+      o.pitch = T.MathUtils.clamp(o.pitch + (e.clientY - dragging.y) * 0.005, -1.4, 1.4);
+      dragging = { x: e.clientX, y: e.clientY };
+    });
+    canvas.addEventListener("pointerup", () => (dragging = undefined));
+    canvas.addEventListener(
+      "wheel",
+      (e) => {
+        if (!this.photo) return;
+        e.preventDefault();
+        const o = this.photoOrbit;
+        o.distance = T.MathUtils.clamp(o.distance * Math.exp(e.deltaY * 0.0012), 8, 2500);
+      },
+      { passive: false },
+    );
   }
   private resume() {
     this.last = 0;
@@ -808,6 +964,7 @@ class Game {
     this.setState("menu");
     this.buildRings();
     this.updateDiscovery();
+    this.syncConditions();
   }
   private input() {
     const controls = this.inputActions.sample(
@@ -891,6 +1048,15 @@ class Game {
     this.last = timestamp;
     this.time += dt;
     if (this.state === "flight") this.telemetry.record(frameMs, this.time);
+    // Hold the frame rate in flight and on the title screen by trading resolution.
+    if (
+      this.settings.dynamicResolution &&
+      this.loaded &&
+      (this.state === "flight" || this.state === "menu") &&
+      !document.hidden &&
+      this.resolution.update(frameMs, dt)
+    )
+      this.applyQuality();
     this.fps = T.MathUtils.damp(this.fps, 1 / Math.max(dt, 0.001), 2, dt);
     engine.update();
     if (this.state === "flight") {
@@ -1053,12 +1219,19 @@ class Game {
       this.world.origin,
     );
     this.updateRings();
+    // Rain on the canopy beneath a storm cell's base.
+    const cell = this.sky.clouds.weatherAt(this.flight.position.x, this.flight.position.z);
+    const rain =
+      T.MathUtils.smoothstep(cell.type, 0.5, 0.85) *
+      (1 - T.MathUtils.smoothstep(this.flight.position.y, 1100, 1500)) *
+      this.sky.clouds.weatherState.storm;
     this.audio.update(
       this.flight.speed,
       this.flight.throttle,
       this.state === "flight",
       this.flight.boost,
       this.flight.mach,
+      rain,
     );
     this.hudTime += dt;
     this.mapTime += dt;
@@ -1080,11 +1253,26 @@ class Game {
     );
     this.cameraGlobal.copy(this.camera.position).add(this.world.origin);
     this.world.updateTerrain(this.renderer, this.cameraGlobal);
+    // Strikes and thunder only run while the world does; photo mode freezes them.
+    this.sky.lightning.timeScale =
+      !this.photo && (this.state === "flight" || this.state === "menu") ? 1 : 0;
     this.sky.render(this.scene, this.camera, this.cameraGlobal, dt);
+    if (this.captureNext) {
+      // Read the drawing buffer in the same task as the render, before it is presented.
+      this.captureNext = false;
+      this.renderer.domElement.toBlob((blob) => {
+        if (!blob) return;
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = `stratos-${new Date().toISOString().replace(/[:.]/g, "-")}.png`;
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(link.href), 5000);
+      }, "image/png");
+    }
     this.drawHud();
     if (!el("debug").hidden)
       el("debug").textContent =
-        `${this.fps.toFixed(0)} FPS\nFRAME median ${this.telemetry.median.toFixed(1)} / p95 ${this.telemetry.p95.toFixed(1)} ms\n${this.renderer.info.render.calls} draw calls\n${this.renderer.info.render.triangles.toLocaleString()} triangles\n${this.world.stats.patches} terrain patches / ${this.world.stats.chunks} scenery chunks\n${this.effects.stats.smoke} smoke / ${this.effects.stats.flame} flame\n${this.physics?.status.colliders ?? 0} Rapier colliders\n${this.renderer.info.memory.geometries} geometries / ${this.renderer.info.memory.textures} textures\nORIGIN ${this.world.origin.x}, ${this.world.origin.z}`;
+        `${this.fps.toFixed(0)} FPS\nFRAME median ${this.telemetry.median.toFixed(1)} / p95 ${this.telemetry.p95.toFixed(1)} ms\nRENDER SCALE ${(this.settings.dynamicResolution ? this.resolution.scale : 1).toFixed(2)}\n${this.renderer.info.render.calls} draw calls\n${this.renderer.info.render.triangles.toLocaleString()} triangles\n${this.world.stats.patches} terrain patches / ${this.world.stats.chunks} scenery chunks\n${this.effects.stats.smoke} smoke / ${this.effects.stats.flame} flame\n${this.physics?.status.colliders ?? 0} Rapier colliders\n${this.renderer.info.memory.geometries} geometries / ${this.renderer.info.memory.textures} textures\nORIGIN ${this.world.origin.x}, ${this.world.origin.z}`;
   }
   /** Vapour, plume, contrails and the camera-side speed effects. */
   private updateSpectacle(dt: number) {
@@ -1104,10 +1292,10 @@ class Game {
         quaternion: this.plane.quaternion,
         mach: flying ? this.flight.mach : 0,
         gLoad: flying ? this.flight.gLoad : 1,
-        boost: this.flight.boost && flying,
+        boost: this.flight.boost && (flying || this.photo),
         throttle: this.flight.throttle,
         altitude: this.flight.position.y,
-        active: this.state === "flight" || this.state === "menu",
+        active: this.state === "flight" || this.state === "menu" || this.photo,
       },
       this.world.origin,
     );
@@ -1120,33 +1308,20 @@ class Game {
       ? T.MathUtils.smoothstep(this.flight.mach, 0.55, 1.4) * (0.25 + 0.75 * nearGround) * 0.7
       : 0;
   }
-  /** Development check that GPU terrain heights match the gameplay height function. */
-  terrainParity() {
-    return [0, 1, 2].map((level) =>
-      this.world.terrain.parity(this.renderer, level, heightAt),
-    );
-  }
-  /** Optional fixed camera in global coordinates, for screenshots and photo framing. */
-  debugCamera?: { position: T.Vector3; target: T.Vector3; fov?: number };
-  /** Optional camera locked to the jet at an offset in its own frame. */
-  followCamera?: { offset: T.Vector3; fov?: number };
   private updateCamera(dt: number) {
-    if (this.followCamera) {
-      this.offset.copy(this.followCamera.offset).applyQuaternion(this.rotation).add(this.local);
+    if (this.photo) {
+      const o = this.photoOrbit;
+      this.offset
+        .set(Math.sin(o.yaw) * Math.cos(o.pitch), Math.sin(o.pitch), Math.cos(o.yaw) * Math.cos(o.pitch))
+        .multiplyScalar(o.distance)
+        .add(this.local);
+      const origin = this.world.origin;
+      const ground = Math.max(0, heightAt(this.offset.x + origin.x, this.offset.z + origin.z)) - origin.y + 4;
+      this.offset.y = Math.max(this.offset.y, ground);
       this.camera.position.copy(this.offset);
-      this.camera.up.set(0, 1, 0).applyQuaternion(this.rotation);
-      this.camera.lookAt(this.local);
-      this.camera.fov = this.followCamera.fov ?? 50;
-      this.updateClipPlanes();
-      this.camera.updateProjectionMatrix();
-      return;
-    }
-    if (this.debugCamera) {
-      this.camera.position.copy(this.debugCamera.position).sub(this.world.origin);
       this.camera.up.set(0, 1, 0);
-      this.look.copy(this.debugCamera.target).sub(this.world.origin);
-      this.camera.lookAt(this.look);
-      this.camera.fov = this.debugCamera.fov ?? 56;
+      this.camera.lookAt(this.local);
+      this.camera.fov = this.photoFov;
       this.updateClipPlanes();
       this.camera.updateProjectionMatrix();
       return;
@@ -1307,7 +1482,7 @@ class Game {
   }
   /** Feeds the conformal canvas HUD every frame while flying. */
   private drawHud() {
-    if (this.state === "menu" || this.followCamera || this.debugCamera) {
+    if (this.state === "menu" || this.photo) {
       this.hud.canvas.style.display = "none";
       return;
     }
@@ -1588,6 +1763,7 @@ class Game {
       el<HTMLSelectElement>(`bind-${action}`).value =
         this.inputActions.bindings[action];
     el<HTMLInputElement>("shake-setting").checked = this.settings.shake;
+    el<HTMLInputElement>("dynres-setting").checked = this.settings.dynamicResolution;
     el<HTMLInputElement>("hud-scale").value = String(this.settings.hudScale);
     document.documentElement.style.setProperty(
       "--hud-scale",
@@ -1616,7 +1792,8 @@ class Game {
           ? 2
           : 1.5;
     this.renderer.shadowMap.enabled = this.settings.quality !== "low";
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, ratio));
+    const scale = this.settings.dynamicResolution ? this.resolution.scale : 1;
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, ratio) * scale);
     this.renderer.setSize(
       innerWidth * (this.settings.quality === "low" ? 0.8 : 1),
       innerHeight * (this.settings.quality === "low" ? 0.8 : 1),
@@ -1645,6 +1822,7 @@ class Game {
       if (s.weather && s.weather in WEATHER) this.settings.weather = s.weather;
       if (Number.isFinite(s.ascentBest) && s.ascentBest! > 0) this.ascent.best = s.ascentBest;
       if (s.aircraft && FLEET.some((a) => a.id === s.aircraft)) this.settings.aircraft = s.aircraft;
+      this.settings.dynamicResolution = s.dynamicResolution !== false;
       this.settings.quality = ["low", "medium", "high"].includes(s.quality)
         ? s.quality
         : "medium";
@@ -1699,8 +1877,11 @@ class Game {
   }
 }
 try {
-  // Exposed for automated visual checks and console exploration.
-  (window as unknown as { stratos: Game }).stratos = new Game();
+  const game = new Game();
+  // Development builds (or ?debug) expose the game for console exploration
+  // and automated visual checks.
+  if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug"))
+    (window as unknown as { stratos: Game }).stratos = game;
 } catch (error) {
   el("fatal").hidden = false;
   el("fatal-message").textContent =

@@ -2,8 +2,10 @@ import RAPIER from "@dimforge/rapier3d-compat";
 import { Quaternion, Vector3 } from "three";
 import { heightAt } from "../world/terrain";
 
+// 16 m samples sit on the drawn 8 m clipmap grid, so the heightfield follows
+// the visible terrain.
 const TILE = 400,
-  SEGMENTS = 16,
+  SEGMENTS = 25,
   RADIUS = 2;
 type Point = { x: number; y: number; z: number };
 let initialization: Promise<void> | undefined;
@@ -63,7 +65,7 @@ export class CollisionWorld {
     this.dirty = true;
     return collider;
   }
-  /** Call before flight sweeps at fixed-step boundaries. At most two tiles per call. */
+  /** Call before flight sweeps at fixed-step boundaries. At most one tile per call. */
   update(globalPosition: Point, renderOrigin: Point, dt = 1 / 60) {
     if (this.disposed) return;
     this.rebase(renderOrigin);
@@ -89,7 +91,7 @@ export class CollisionWorld {
           this.dirty = true;
         }
     }
-    for (let i = 0; i < 2 && this.queued.length; i++) {
+    for (let i = 0; i < 1 && this.queued.length; i++) {
       const tile = this.queued.shift()!;
       const heights = new Float32Array((SEGMENTS + 1) ** 2);
       // Rapier's rows follow Z, columns follow X; storage is column-major.

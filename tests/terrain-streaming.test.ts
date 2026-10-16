@@ -1,58 +1,31 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  buildTerrain,
-  CHUNK,
   heightAt,
   renderedHeightAt,
   regionMasks,
 } from "../src/world/terrain";
 import { RequestLedger, terrainTargets } from "../src/world/StreamingScheduler";
 
-test("mixed terrain LOD boundaries are the same continuous polyline, including far negative tiles", () => {
-  for (const [cx, cz] of [
-    [0, -1],
-    [-632, -813],
+test("collision surface is the drawn 8 m clipmap grid, bilinearly interpolated", () => {
+  for (const [x, z] of [
+    [-1269, 2],
+    [1, 314],
+    [-632 * 1600 + 37, -813 * 1600 + 5],
   ]) {
-    const fine = buildTerrain(cx, cz, 48),
-      coarse = buildTerrain(cx + 1, cz, 12);
-    for (let i = 0; i <= 48; i++) {
-      const fineHeight = fine.positions[(i * 49 + 48) * 3 + 1];
-      const low = Math.min(11, Math.floor(i / 4)),
-        t = i / 4 - low;
-      const a = coarse.positions[low * 13 * 3 + 1],
-        b = coarse.positions[(low + 1) * 13 * 3 + 1];
-      assert.ok(Math.abs(fineHeight - (a + (b - a) * t)) < 0.0002);
-    }
-  }
-});
-
-test("authoritative near query follows actual mesh triangles rather than bilinear interpolation", () => {
-  const cx = -1,
-    cz = 0,
-    mesh = buildTerrain(cx, cz, 48),
-    step = CHUNK / 48;
-  for (const [ix, iz, u, v] of [
-    [15, 18, 0.2, 0.3],
-    [40, 21, 0.8, 0.7],
-    [47, 12, 0.85, 0.33],
-  ]) {
-    const a = mesh.positions[(iz * 49 + ix) * 3 + 1],
-      b = mesh.positions[(iz * 49 + ix + 1) * 3 + 1];
-    const c = mesh.positions[((iz + 1) * 49 + ix) * 3 + 1],
-      d = mesh.positions[((iz + 1) * 49 + ix + 1) * 3 + 1];
-    const expected =
-      u + v <= 1
-        ? a + (b - a) * u + (c - a) * v
-        : d + (c - d) * (1 - u) + (b - d) * (1 - v);
-    assert.ok(
-      Math.abs(
-        renderedHeightAt(
-          cx * CHUNK + (ix + u) * step,
-          cz * CHUNK + (iz + v) * step,
-        ) - expected,
-      ) < 0.0002,
-    );
+    const gx = Math.floor(x / 8) * 8,
+      gz = Math.floor(z / 8) * 8;
+    // Exact at grid points…
+    assert.equal(renderedHeightAt(gx, gz), heightAt(gx, gz));
+    // …and bounded by the four surrounding samples in between.
+    const corners = [
+      heightAt(gx, gz),
+      heightAt(gx + 8, gz),
+      heightAt(gx, gz + 8),
+      heightAt(gx + 8, gz + 8),
+    ];
+    const h = renderedHeightAt(x, z);
+    assert.ok(h >= Math.min(...corners) - 1e-9 && h <= Math.max(...corners) + 1e-9);
   }
 });
 

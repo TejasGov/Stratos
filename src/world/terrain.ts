@@ -32,7 +32,7 @@ export function regionMasks(x: number, z: number) {
   );
   return { drainage, infrastructure, moisture };
 }
-export function noise(x: number, z: number) {
+function noise(x: number, z: number) {
   const ix = Math.floor(x),
     iz = Math.floor(z),
     u = smooth(x - ix),
@@ -157,120 +157,26 @@ export function forestMask(
     (1 - smooth01(780, 1050, h))
   );
 }
-export function surfaceColor(
-  h: number,
-  slope: number,
-  x = 0,
-  z = 0,
-): [number, number, number] {
-  if (h < 9) return [0.66, 0.63, 0.43];
-  if (h < 45) return [0.44, 0.5, 0.29];
-  const masks = regionMasks(x, z);
-  const rock = clamp((h - 680) / 520 + slope * 0.55);
-  const dry = 1 - masks.moisture;
-  return [
-    0.065 + dry * 0.065 + rock * 0.16,
-    0.145 + dry * 0.01 + rock * 0.065,
-    0.07 + dry * 0.025 + rock * 0.13,
-  ];
-}
-/** All LOD boundaries share a 12-segment polyline, preventing mixed-LOD cracks. */
-export function meshHeightAt(cx: number, cz: number, lx: number, lz: number) {
-  if (Math.abs(lx) < 1e-6) lx = 0;
-  if (Math.abs(lz) < 1e-6) lz = 0;
-  if (Math.abs(lx - CHUNK) < 1e-6) lx = CHUNK;
-  if (Math.abs(lz - CHUNK) < 1e-6) lz = CHUNK;
-  const wx = cx * CHUNK + lx,
-    wz = cz * CHUNK + lz;
-  const edgeX = lx === 0 || lx === CHUNK,
-    edgeZ = lz === 0 || lz === CHUNK;
-  if (!edgeX && !edgeZ) return heightAt(wx, wz);
-  const step = CHUNK / 12,
-    axis = edgeX ? lz : lx;
-  const low = Math.min(11, Math.floor(axis / step)),
-    t = clamp(axis / step - low);
-  const a = edgeX
-    ? heightAt(wx, cz * CHUNK + low * step)
-    : heightAt(cx * CHUNK + low * step, wz);
-  const b = edgeX
-    ? heightAt(wx, cz * CHUNK + (low + 1) * step)
-    : heightAt(cx * CHUNK + (low + 1) * step, wz);
-  return a + (b - a) * t;
-}
-/** Surface of the authoritative near (48-segment) triangles, including edge constraints. */
-export function renderedHeightAt(x: number, z: number, segments = 48) {
-  const cx = Math.floor(x / CHUNK),
-    cz = Math.floor(z / CHUNK),
-    step = CHUNK / segments;
-  const gx = (x - cx * CHUNK) / step,
-    gz = (z - cz * CHUNK) / step;
-  const ix = Math.min(segments - 1, Math.floor(gx)),
-    iz = Math.min(segments - 1, Math.floor(gz));
+/** Clipmap texel spacing of the finest GPU terrain level (metres). */
+const DRAWN_GRID = 8;
+/**
+ * The surface the GPU terrain actually draws near the camera: heightAt()
+ * sampled on the 8 m clipmap grid and interpolated bilinearly. Collision and
+ * line-of-sight queries use it so they match what the player sees.
+ */
+export function renderedHeightAt(x: number, z: number) {
+  const gx = x / DRAWN_GRID,
+    gz = z / DRAWN_GRID;
+  const ix = Math.floor(gx),
+    iz = Math.floor(gz);
   const u = gx - ix,
     v = gz - iz;
-  const a = meshHeightAt(cx, cz, ix * step, iz * step);
-  const b = meshHeightAt(cx, cz, (ix + 1) * step, iz * step);
-  const c = meshHeightAt(cx, cz, ix * step, (iz + 1) * step);
-  const d = meshHeightAt(cx, cz, (ix + 1) * step, (iz + 1) * step);
-  return u + v <= 1
-    ? a + (b - a) * u + (c - a) * v
-    : d + (c - d) * (1 - u) + (b - d) * (1 - v);
-}
-export function buildTerrain(cx: number, cz: number, segments: number) {
-  const side = segments + 1,
-    points: number[] = [],
-    normals: number[] = [],
-    colors: number[] = [],
-    indices: number[] = [];
-  for (let z = 0; z <= segments; z++)
-    for (let x = 0; x <= segments; x++) {
-      const lx = (x / segments) * CHUNK,
-        lz = (z / segments) * CHUNK;
-      const wx = cx * CHUNK + lx,
-        wz = cz * CHUNK + lz,
-        h = meshHeightAt(cx, cz, lx, lz);
-      const nx = (heightAt(wx - 4, wz) - heightAt(wx + 4, wz)) / 8;
-      const nz = (heightAt(wx, wz - 4) - heightAt(wx, wz + 4)) / 8;
-      const len = Math.hypot(nx, 1, nz);
-      points.push(lx, h, lz);
-      normals.push(nx / len, 1 / len, nz / len);
-      colors.push(...surfaceColor(h, Math.hypot(nx, nz), wx, wz));
-    }
-  for (let z = 0; z < segments; z++)
-    for (let x = 0; x < segments; x++) {
-      const a = z * side + x,
-        b = a + 1,
-        c = a + side,
-        d = c + 1;
-      indices.push(a, c, b, b, c, d);
-    }
-  const edges = [
-    Array.from({ length: side }, (_, i) => i),
-    Array.from({ length: side }, (_, i) => i * side + segments),
-    Array.from({ length: side }, (_, i) => segments * side + segments - i),
-    Array.from({ length: side }, (_, i) => (segments - i) * side),
-  ];
-  for (const edge of edges) {
-    const first = points.length / 3;
-    edge.forEach((i) => {
-      points.push(points[i * 3], points[i * 3 + 1] - 95, points[i * 3 + 2]);
-      normals.push(...normals.slice(i * 3, i * 3 + 3));
-      colors.push(...colors.slice(i * 3, i * 3 + 3));
-    });
-    for (let i = 0; i < segments; i++)
-      indices.push(
-        edge[i],
-        first + i,
-        edge[i + 1],
-        edge[i + 1],
-        first + i,
-        first + i + 1,
-      );
-  }
-  return {
-    positions: new Float32Array(points),
-    normals: new Float32Array(normals),
-    colors: new Float32Array(colors),
-    indices: new Uint32Array(indices),
-  };
+  if (u === 0 && v === 0) return heightAt(x, z);
+  const x0 = ix * DRAWN_GRID,
+    z0 = iz * DRAWN_GRID;
+  const a = heightAt(x0, z0),
+    b = heightAt(x0 + DRAWN_GRID, z0),
+    c = heightAt(x0, z0 + DRAWN_GRID),
+    d = heightAt(x0 + DRAWN_GRID, z0 + DRAWN_GRID);
+  return (a * (1 - u) + b * u) * (1 - v) + (c * (1 - u) + d * u) * v;
 }

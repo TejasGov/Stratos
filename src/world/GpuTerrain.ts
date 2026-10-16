@@ -287,13 +287,18 @@ export class GpuTerrain {
     }
     return true;
   }
+  private lastCamera = new T.Vector3();
   update(
     renderer: T.WebGLRenderer,
     cameraGlobal: T.Vector3,
     origin: T.Vector3,
     firstFrame = false,
   ) {
-    this.updateLevels(renderer, cameraGlobal, origin, firstFrame ? TERRAIN_LEVELS : 2);
+    // A camera jump (restart, ascent start, storm approach) rebuilds every
+    // level at once instead of drawing stale texels for a few frames.
+    const jumped = this.lastCamera.distanceToSquared(cameraGlobal) > 512 * 512;
+    this.lastCamera.copy(cameraGlobal);
+    this.updateLevels(renderer, cameraGlobal, origin, firstFrame || jumped ? TERRAIN_LEVELS : 2);
     this.cameraLocal.copy(cameraGlobal).sub(origin);
     for (let k = 0; k < TERRAIN_LEVELS; k++) {
       const end = this.ranges[k] * this.detail;
@@ -312,28 +317,6 @@ export class GpuTerrain {
     this.patches.clearUpdateRanges();
     this.patches.addUpdateRange(0, this.count * 4);
     this.stats.patches = this.count;
-  }
-  /** Development check: max |GPU − reference| height over a block of level texels. */
-  parity(
-    renderer: T.WebGLRenderer,
-    level: number,
-    reference: (x: number, z: number) => number,
-  ) {
-    const out = new Float32Array(64 * 64 * 4);
-    // Binding the target selects which array layer the framebuffer reads.
-    const previous = renderer.getRenderTarget();
-    renderer.setRenderTarget(this.heights, level);
-    renderer.readRenderTargetPixels(this.heights, 224, 224, 64, 64, out);
-    renderer.setRenderTarget(previous);
-    const spacing = BASE_SPACING * 2 ** level;
-    let worst = 0;
-    for (let j = 0; j < 64; j++)
-      for (let i = 0; i < 64; i++) {
-        const x = (this.levels[level].originX + 224 + i) * spacing,
-          z = (this.levels[level].originZ + 224 + j) * spacing;
-        worst = Math.max(worst, Math.abs(out[(j * 64 + i) * 4] - reference(x, z)));
-      }
-    return worst;
   }
   dispose() {
     this.heights.dispose();

@@ -10,6 +10,7 @@
 | Smoke and fire                    | [Effects production and rendering](./smoke-fire.md)           | Pooled instanced flipbooks, world-space ribbons, soft particles and screen-coverage budgets                |
 | Fighter combat                    | [Competitive research and combat design](./fighter-combat.md) | Accessible flight, readable targeting, purposeful encounters and a small polished combat slice             |
 | Terrain generation                | [Terrain architecture and tools](./terrain.md)                | Authored regional geography plus deterministic procedural expansion, stitched LOD and predictive streaming |
+| Sky, clouds, ocean, post (2026-10) | [Rendering research notes](./rendering.md)                   | Hillaire 2020 atmosphere LUTs, Nubis-style volumetric clouds with checkerboard temporal reconstruction, Bruneton ocean, HDR post |
 
 This is a technical and competitive desk-research study. It compares advertised product capabilities and documented techniques. It is not a statistically representative player survey, a revenue estimate, or a claim that Stratos can reproduce native AAA production scope. Performance budgets below are proposed experiments, not measured achievements.
 

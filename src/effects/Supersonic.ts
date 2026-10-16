@@ -491,12 +491,15 @@ export class Supersonic {
     // Humid low air condenses; above ~5 km the transonic cloud no longer forms.
     const humid = 1 - T.MathUtils.smoothstep(altitude, 1500, 5500);
     const supersonic = mach >= 1;
-    if (state.active && supersonic && !this.wasSupersonic) {
+    // Only a running simulation can cross the barrier: pause and photo mode
+    // (dt = 0) leave the latch alone so resuming does not boom again.
+    const live = state.active && dt > 0;
+    if (live && supersonic && !this.wasSupersonic) {
       this.onset = 1;
       this.spawnBoom(state.position, state.quaternion);
       this.onBoom?.(state.position);
     }
-    this.wasSupersonic = state.active && (supersonic || (this.wasSupersonic && mach > 0.985));
+    if (live) this.wasSupersonic = supersonic || (this.wasSupersonic && mach > 0.985);
     this.onset = Math.max(0, this.onset - dt * 1.6);
     const window =
       T.MathUtils.smoothstep(mach, 0.9, 0.975) *

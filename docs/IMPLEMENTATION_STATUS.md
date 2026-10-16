@@ -48,3 +48,14 @@ Browser validation completed an entire intercept with three kills using target f
 This is a practical first implementation of the research priorities. Cloud volumetrics, GPU-compute effects, erosion simulation, CDLOD/clipmap rewrites, geomorphing, continuous trail ribbons, advanced postprocessing and multiplayer remain later upgrades. Player flight is arcade; enemy steering is finite-rate but does not run the same aircraft model. The Rapier bubble is sampled/coarse and remains backed by analytical close terrain collision. Physics meshes do not model every decorative prop or dynamic fragmentation.
 
 The rigid fighter has no cockpit interior, animated surfaces or landing gear. Flight starts airborne. The Rapier compat package includes a large WASM payload; dynamic import separates it from the main bundle but does not remove download/decode cost. No claim of AAA parity or a universal 60 FPS result is made.
+
+## Visual overhaul (October 16, 2026)
+
+Four iterations replaced the outdoor renderer and much of the "Remaining limits" above. Each is on its own branch (`stratos/iteration-1-skyforge` → `stratos/iteration-4-darkroom`).
+
+1. **Skyforge.** HDR frame graph with Hillaire-style atmosphere LUTs, volumetric clouds (GPU noise volumes, checkerboard temporal reconstruction), an analytic Bruneton-style ocean, cloud shadows, bloom, crepuscular rays, lens flare, eye adaptation and ACES. The procedural sky, cloud impostors and Fresnel ocean were removed.
+2. **Ascent.** GPU CDLOD terrain from an 11-level clipmap with a GLSL port of the height function (matches the CPU to ~1e-4 m), geomorphing, curvature and heightfield shadows to a 650 km horizon; a new archipelago generator; a Mach-aware flight model; vapour cone, sonic boom, per-engine afterburner diamonds, ribbon contrails and vortices; a canvas conformal HUD; the Ascent challenge.
+3. **Tempest.** Lightning, thunder and rain shafts; storm-aware title cinematic; a nine-aircraft hangar generated with Meshy (measured nozzles and wingtips, per-airframe performance, enemy roster).
+4. **Darkroom.** Photo mode with full-resolution capture, dynamic resolution, ElevenLabs sound design with a master bus, and the fixes from a full-branch review — most importantly, collision now follows the drawn clipmap surface instead of the removed chunk meshes.
+
+**Validation.** Type-check, production build and 54 automated tests pass. Visual work was checked frame by frame in headless Chromium with SwiftShader (software WebGL 2), with read-back probes for terrain parity, cloud layers and exposure; the flight envelope (Mach 0.97 level near sea level, about 1.3 at 6 km, about 2.0 at 28 km, 30 km zoom climb in roughly 100 s) was verified in Node simulations. Frame rates on real GPUs were not measured in this environment; dynamic resolution and the three presets exist for that reason.

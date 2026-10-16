@@ -328,6 +328,13 @@ void main() {
   }
   cloud /= weight;
   cloudDepth /= weight;
+  // Geometry nearer than the layer's mean depth only receives the part in front
+  // of it; this removes low-resolution halos around the jet and near terrain.
+  if (refDist < 1.6e5) {
+    float front = clamp(refDist / max(cloudDepth, 1.0), 0.0, 1.0);
+    front = front * front * (3.0 - 2.0 * front);
+    cloud = vec4(cloud.rgb * front, mix(1.0, cloud.a, front));
+  }
   if (cloud.a < 0.999) {
     vec3 ci, ct;
     surfacePerspective(uv, rd, cloudDepth, false, ci, ct);

@@ -2,7 +2,6 @@ import * as T from "three";
 import { ATMOSPHERE_GLSL } from "./shaders/atmosphere";
 import { FullscreenPass, hdrTarget, passMaterial } from "./FullscreenPass";
 
-export const PLANET_RADIUS_M = 6360000;
 /** Aerial-perspective froxel depth. Beyond it, the sky-view LUT covers ground hits. */
 export const AERIAL_RANGE_KM = 96;
 export const AERIAL_SLICES = 32;
