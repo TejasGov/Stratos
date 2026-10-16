@@ -40,19 +40,24 @@ function fakeAudio() {
       return source;
     },
   };
+  const links = { open: 0, closed: 0 };
   const audio = {
     duck: 0,
     decode: async (url: string) => ({ line: url }),
     radio: () => ({ context, input: {} }),
     squelch() {},
+    transmission() {
+      links.open++;
+      return { input: {}, close: () => links.closed++ };
+    },
   };
-  return { audio: audio as unknown as FlightAudio, sources };
+  return { audio: audio as unknown as FlightAudio, sources, links };
 }
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 test("urgent calls cut in; routine calls wait their turn", async () => {
-  const { audio, sources } = fakeAudio();
+  const { audio, sources, links } = fakeAudio();
   const comms = new Comms(audio);
   const subtitles: (string | null)[] = [];
   comms.onSubtitle = (text) => subtitles.push(text);
@@ -69,15 +74,19 @@ test("urgent calls cut in; routine calls wait their turn", async () => {
   );
   assert.equal(subtitles.at(-1), LINES.missile.text);
   assert.equal(audio.duck, 1);
+  // The cut-off transmission dropped its carrier.
+  assert.deepEqual(links, { open: 2, closed: 1 });
   // Lower priority traffic queues behind the warning.
   comms.say("landmark");
   await settle();
   assert.equal(sources.length, 2);
   sources[1].end();
   assert.equal(audio.duck, 0);
+  assert.equal(links.closed, 2);
   await wait(700);
   assert.equal(sources.at(-1)!.line, voiceFile("landmark"));
   comms.clear();
+  assert.equal(links.closed, 3);
 });
 
 test("cooldowns stop a line repeating and clear() drops lines still loading", async () => {

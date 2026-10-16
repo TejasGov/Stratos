@@ -71,11 +71,13 @@ Every image is a real-time frame from the game (photo mode or the title cinemati
 - **HDR post.** Physically based exposure with eye adaptation, bloom, crepuscular rays, lens
   flare and ACES tonemapping; dynamic resolution holds the frame rate.
 - **Sound.** ElevenLabs-generated engine, afterburner, wind and rain loops, sonic boom, thunder,
-  cannon, missile and explosions, with synthesized fallbacks.
+  cannon, missile and explosions, with synthesized fallbacks. Flare salvos pop and fizz away
+  behind the jet.
 - **Haven Control on the radio.** A voiced controller briefs each sortie, calls the tropopause,
   the stratosphere and the edge of space, laughs at your first sonic boom, shouts the missile
   break, counts your kills and goes very quiet when you don't come back. Lines run through a
-  band-limited radio chain with squelch and subtitles; urgent calls cut in over chatter.
+  compressed, band-limited radio chain with squelch, carrier static that thickens in storms and
+  the odd dropout where the signal breaks up; urgent calls cut in over chatter, with subtitles.
 
 ## The fleet
 
