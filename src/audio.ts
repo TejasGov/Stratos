@@ -160,23 +160,26 @@ export class FlightAudio {
       };
     }
   }
-  cue(kind: "gun" | "missile" | "lock" | "warning" | "explosion" | "flare") {
+  /** `distance` (m) and `scale` apply to explosions: speed-of-sound delay, air absorption and loudness. */
+  cue(
+    kind: "gun" | "missile" | "lock" | "warning" | "explosion" | "flare",
+    distance = 0,
+    scale = 1,
+  ) {
     if (!this.ready()) return;
     if (kind === "flare") return this.flares();
+    if (kind === "explosion") return this.explosion(distance, scale);
     const ctx = this.context!;
     if (kind === "gun" && this.samples.has("cannon")) {
       this.holdGun();
       return;
     }
     if (kind === "missile" && this.play("missile", 0.55)) return;
-    if (kind === "explosion" && this.play("explosion", 0.7, { rate: 0.9 + Math.random() * 0.2 })) return;
     const oscillator = ctx.createOscillator();
     const gain = ctx.createGain();
     const now = ctx.currentTime;
-    const duration =
-      kind === "explosion" ? 0.55 : kind === "missile" ? 0.22 : 0.09;
-    oscillator.type =
-      kind === "gun" || kind === "explosion" ? "sawtooth" : "sine";
+    const duration = kind === "missile" ? 0.22 : 0.09;
+    oscillator.type = kind === "gun" ? "sawtooth" : "sine";
     const frequency =
       kind === "lock"
         ? 900
@@ -187,14 +190,11 @@ export class FlightAudio {
             : 100;
     oscillator.frequency.setValueAtTime(frequency, now);
     oscillator.frequency.exponentialRampToValueAtTime(
-      kind === "explosion" ? 25 : frequency * 0.7,
+      frequency * 0.7,
       now + duration,
     );
     gain.gain.setValueAtTime(0, now);
-    gain.gain.linearRampToValueAtTime(
-      kind === "explosion" ? 0.07 : 0.035,
-      now + 0.01,
-    );
+    gain.gain.linearRampToValueAtTime(0.035, now + 0.01);
     gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
     oscillator.connect(gain);
     gain.connect(this.master!);
@@ -415,62 +415,229 @@ export class FlightAudio {
       gain.disconnect();
     };
   }
-  /** Countermeasure salvo: a dispenser thump per cartridge, then the magnesium fizz. */
-  private flares() {
+  /** Dense magnesium crackle: a sizzling bed plus a storm of 0.3-3 ms pops of varying weight. */
+  private burn?: AudioBuffer;
+  private burnBuffer() {
+    if (this.burn) return this.burn;
+    const ctx = this.context!,
+      rate = ctx.sampleRate;
+    this.burn = ctx.createBuffer(1, rate * 4, rate);
+    const data = this.burn.getChannelData(0);
+    let pop = 0,
+      level = 0,
+      flutter = 1;
+    for (let i = 0; i < data.length; i++) {
+      if (i % 220 === 0) flutter = 0.55 + Math.random() * 0.9;
+      if (pop <= 0 && Math.random() < 320 / rate) {
+        pop = rate * (0.0003 + Math.random() * 0.0028);
+        level = Math.random() < 0.12 ? 1.4 : 0.35 + Math.random() * 0.6;
+      }
+      pop--;
+      data[i] = (0.17 * flutter + (pop > 0 ? level : 0)) * (Math.random() * 2 - 1);
+    }
+    return this.burn;
+  }
+  /**
+   * Countermeasure salvo: each cartridge leaves the dispenser with a sharp pyrotechnic pop
+   * and a soft thump, then burns for 3-4 s with a fierce sizzle and crackle. Pairs fire
+   * left and right a tenth of a second apart.
+   */
+  private flares(count = 6) {
     const ctx = this.context!;
     const now = ctx.currentTime;
-    for (let i = 0; i < 3; i++) {
-      const at = now + i * 0.1 + Math.random() * 0.025;
-      const end = at + 1.1 + Math.random() * 0.4;
+    const burn = this.burnBuffer();
+    for (let i = 0; i < count; i++) {
+      const at = now + Math.floor(i / 2) * 0.1 + Math.random() * 0.012;
+      const length = 3.1 + Math.random() * 0.9;
+      const panner = ctx.createStereoPanner();
+      panner.pan.value = (i % 2 ? 1 : -1) * (0.45 + Math.random() * 0.25);
+      panner.connect(this.master!);
+      // The squib: a hard, bright crack, then the cartridge's low thump.
       const pop = ctx.createBufferSource();
       pop.buffer = this.noise!;
-      const band = ctx.createBiquadFilter();
-      band.type = "bandpass";
-      band.frequency.value = 700 + Math.random() * 600;
-      band.Q.value = 0.9;
+      const crackHigh = ctx.createBiquadFilter();
+      crackHigh.type = "highpass";
+      crackHigh.frequency.value = 1400 + Math.random() * 900;
       const popGain = ctx.createGain();
-      popGain.gain.setValueAtTime(0.0001, at);
-      popGain.gain.exponentialRampToValueAtTime(0.35, at + 0.003);
-      popGain.gain.exponentialRampToValueAtTime(0.0001, at + 0.1);
+      popGain.gain.value = 0;
+      popGain.gain.setValueAtTime(0, at);
+      popGain.gain.linearRampToValueAtTime(0.34, at + 0.0015);
+      popGain.gain.exponentialRampToValueAtTime(0.0001, at + 0.07);
       const thump = ctx.createOscillator();
-      thump.frequency.setValueAtTime(120, at);
-      thump.frequency.exponentialRampToValueAtTime(40, at + 0.12);
+      thump.frequency.setValueAtTime(160, at);
+      thump.frequency.exponentialRampToValueAtTime(48, at + 0.11);
       const thumpGain = ctx.createGain();
-      thumpGain.gain.setValueAtTime(0.0001, at);
-      thumpGain.gain.exponentialRampToValueAtTime(0.22, at + 0.004);
-      thumpGain.gain.exponentialRampToValueAtTime(0.0001, at + 0.15);
-      // The flare lights and sputters as it falls away behind the jet.
+      thumpGain.gain.value = 0;
+      thumpGain.gain.setValueAtTime(0, at);
+      thumpGain.gain.linearRampToValueAtTime(0.24, at + 0.004);
+      thumpGain.gain.exponentialRampToValueAtTime(0.0001, at + 0.16);
+      // The burn: ignition flare-up, a flickering plateau and a sputtering end.
       const fizz = ctx.createBufferSource();
-      fizz.buffer = this.noise!;
+      fizz.buffer = burn;
       fizz.loop = true;
+      fizz.playbackRate.value = 0.9 + Math.random() * 0.25;
       const highpass = ctx.createBiquadFilter();
       highpass.type = "highpass";
-      highpass.frequency.setValueAtTime(3200, at);
-      highpass.frequency.exponentialRampToValueAtTime(1100, end);
+      highpass.frequency.setValueAtTime(2600, at);
+      highpass.frequency.exponentialRampToValueAtTime(1500, at + length);
+      const body = ctx.createBiquadFilter();
+      body.type = "peaking";
+      body.frequency.value = 4200;
+      body.gain.value = 5;
+      body.Q.value = 0.8;
       const fizzGain = ctx.createGain();
-      fizzGain.gain.setValueAtTime(0, at);
-      for (let t = at + 0.05; t < end; t += 0.025 + Math.random() * 0.03) {
-        const fade = 1 - (t - at) / (end - at);
-        fizzGain.gain.linearRampToValueAtTime(0.16 * fade * (0.4 + Math.random() * 0.6), t);
+      fizzGain.gain.value = 0;
+      const steps = Math.ceil(length * 40),
+        curve = new Float32Array(steps);
+      for (let k = 0; k < steps; k++) {
+        const t = k / (steps - 1),
+          ignite = Math.min(1, t * length * 40),
+          flare = 1 + 0.8 * Math.exp(-t * length * 5),
+          end = Math.min(1, (1 - t) * length * 1.6);
+        curve[k] = 0.16 * ignite * flare * end * (0.45 + Math.random() * 0.75) * (Math.random() < 0.07 ? 0.3 : 1);
       }
-      fizzGain.gain.linearRampToValueAtTime(0, end + 0.05);
-      pop.connect(band);
-      band.connect(popGain);
-      popGain.connect(this.master!);
+      fizzGain.gain.setValueCurveAtTime(curve, at + 0.04, length);
+      pop.connect(crackHigh);
+      crackHigh.connect(popGain);
+      popGain.connect(panner);
       thump.connect(thumpGain);
-      thumpGain.connect(this.master!);
+      thumpGain.connect(panner);
       fizz.connect(highpass);
-      highpass.connect(fizzGain);
-      fizzGain.connect(this.master!);
-      pop.start(at, Math.random() * 2, 0.12);
+      highpass.connect(body);
+      body.connect(fizzGain);
+      fizzGain.connect(panner);
+      pop.start(at, Math.random() * 2, 0.08);
       thump.start(at);
-      thump.stop(at + 0.16);
-      fizz.start(at, Math.random() * 2);
-      fizz.stop(end + 0.1);
+      thump.stop(at + 0.18);
+      fizz.start(at + 0.04, Math.random() * 3);
+      fizz.stop(at + 0.04 + length + 0.05);
       fizz.onended = () => {
-        for (const node of [pop, band, popGain, thump, thumpGain, fizz, highpass, fizzGain])
+        for (const node of [pop, crackHigh, popGain, thump, thumpGain, fizz, highpass, body, fizzGain, panner])
           node.disconnect();
       };
+    }
+  }
+  /**
+   * Explosion `distance` metres away: the recorded blast arrives at the speed of sound,
+   * darker and softer with range, under a sub-bass thump (low frequencies carry), a
+   * pressure crack when close, and a tail of crackling fire and falling debris.
+   */
+  private explosion(distance: number, scale: number) {
+    const ctx = this.context!;
+    const start = ctx.currentTime + distance / 343;
+    const near = 1 - Math.min(1, distance / 5000);
+    const size = Math.min(1.3, 0.4 + 0.45 * Math.sqrt(Math.max(0.1, scale)));
+    const level = size / (1 + distance / 900);
+    if (level < 0.012) return;
+    const lowLevel = size / (1 + distance / 3500);
+    const sampled = this.play("explosion", 0.62 * level, {
+      at: start,
+      cutoff: 500 + 19500 * Math.pow(near, 1.6),
+      rate: (0.9 + Math.random() * 0.2) * (scale > 2 ? 0.88 : 1),
+    });
+    const voice = (source: AudioScheduledSourceNode, nodes: AudioNode[], at: number, end: number) => {
+      source.start(at);
+      source.stop(end);
+      source.onended = () => {
+        for (const node of nodes) node.disconnect();
+        source.disconnect();
+      };
+    };
+    // Sub-bass thump: the chest-hitting part, long and low.
+    const thump = ctx.createOscillator();
+    thump.frequency.setValueAtTime(66, start);
+    thump.frequency.exponentialRampToValueAtTime(21, start + 0.9);
+    const thumpGain = ctx.createGain();
+    thumpGain.gain.value = 0;
+    thumpGain.gain.setValueAtTime(0, start);
+    thumpGain.gain.linearRampToValueAtTime(0.5 * lowLevel, start + 0.008);
+    thumpGain.gain.exponentialRampToValueAtTime(0.0001, start + 0.8 + 0.25 * Math.min(scale, 4));
+    thump.connect(thumpGain);
+    thumpGain.connect(this.master!);
+    voice(thump, [thumpGain], start, start + 1.9);
+    if (!sampled) {
+      // No recording yet: a low-passed noise body stands in for it.
+      const source = ctx.createBufferSource();
+      source.buffer = this.noise!;
+      const filter = ctx.createBiquadFilter();
+      filter.type = "lowpass";
+      filter.frequency.setValueAtTime(1800 * near + 300, start);
+      filter.frequency.exponentialRampToValueAtTime(70, start + 1.6);
+      const gain = ctx.createGain();
+      gain.gain.value = 0;
+      gain.gain.setValueAtTime(0, start);
+      gain.gain.linearRampToValueAtTime(0.4 * level, start + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + 1.7);
+      source.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.master!);
+      source.loop = true;
+      voice(source, [filter, gain], start, start + 1.8);
+    }
+    // Pressure crack: only audible when the blast is near.
+    if (near > 0.45) {
+      const crack = ctx.createBufferSource();
+      crack.buffer = this.noise!;
+      const high = ctx.createBiquadFilter();
+      high.type = "highpass";
+      high.frequency.value = 900;
+      const gain = ctx.createGain();
+      gain.gain.value = 0;
+      gain.gain.setValueAtTime(0, start);
+      gain.gain.linearRampToValueAtTime(0.24 * near * size, start + 0.002);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.14);
+      crack.connect(high);
+      high.connect(gain);
+      gain.connect(this.master!);
+      crack.loop = true;
+      voice(crack, [high, gain], start, start + 0.2);
+    }
+    // Fire and debris: crackle that rains down over the next seconds, darker the further away.
+    if (this.crackle) {
+      const tail = ctx.createBufferSource();
+      tail.buffer = this.crackle;
+      tail.loop = true;
+      const band = ctx.createBiquadFilter();
+      band.type = "bandpass";
+      band.frequency.setValueAtTime(900 + 4000 * near, start);
+      band.frequency.exponentialRampToValueAtTime(500 + 1200 * near, start + 3.2);
+      band.Q.value = 0.6;
+      const gain = ctx.createGain();
+      gain.gain.value = 0;
+      const duration = 2.2 + Math.min(1.8, scale * 0.35);
+      gain.gain.setValueAtTime(0, start + 0.12);
+      gain.gain.linearRampToValueAtTime(0.5 * level, start + 0.3);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.3 + duration);
+      tail.connect(band);
+      band.connect(gain);
+      gain.connect(this.master!);
+      tail.playbackRate.value = 0.8 + Math.random() * 0.4;
+      tail.start(start + 0.12, Math.random() * 2);
+      tail.stop(start + 0.5 + duration);
+      tail.onended = () => {
+        tail.disconnect();
+        band.disconnect();
+        gain.disconnect();
+      };
+    }
+    const impacts = Math.min(14, 5 + Math.round(scale * 3));
+    for (let i = 0; i < impacts; i++) {
+      const at = start + 0.5 + Math.pow(Math.random(), 0.8) * (2.2 + scale * 0.4);
+      const patter = ctx.createBufferSource();
+      patter.buffer = this.noise!;
+      const filter = ctx.createBiquadFilter();
+      filter.type = "lowpass";
+      filter.frequency.value = (350 + Math.random() * 1500) * (0.4 + 0.6 * near);
+      const gain = ctx.createGain();
+      gain.gain.value = 0;
+      gain.gain.setValueAtTime(0, at);
+      gain.gain.linearRampToValueAtTime((0.05 + Math.random() * 0.1) * level, at + 0.003);
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.05 + Math.random() * 0.07);
+      patter.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.master!);
+      patter.loop = true;
+      voice(patter, [filter, gain], at, at + 0.2);
     }
   }
   /** Fetches and decodes the recorded layers in the background. */
