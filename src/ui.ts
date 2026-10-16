@@ -17,7 +17,7 @@ export function createUI() {
     `
     <label>Camera shake<input id="shake-setting" type="checkbox" checked/></label>
     <label>HUD scale<input id="hud-scale" type="range" min="0.8" max="1.3" step="0.1" value="1"/></label>
-    <div class="binding-settings"><span class="eyebrow">COMBAT KEYS</span>${["gun", "missile", "target", "flare"].map((action) => `<label>${action === "gun" ? "Cannon" : action === "missile" ? "Missile" : action === "target" ? "Cycle target" : "Countermeasure"}<select id="bind-${action}">${["F", "X", "T", "V", "G", "H", "J", "K", "Z"].map((key) => `<option value="Key${key}">${key}</option>`).join("")}</select></label>`).join("")}</div>`,
+    <div class="binding-settings"><span class="eyebrow">COMBAT KEYS</span>${["gun", "missile", "target", "flare"].map((action) => `<label>${action === "gun" ? "Cannon" : action === "missile" ? "Missile" : action === "target" ? "Cycle target" : "Countermeasure"}<select id="bind-${action}">${["F", "X", "T", "V", "G", "H", "J", "K"].map((key) => `<option value="Key${key}">${key}</option>`).join("")}</select></label>`).join("")}</div>`,
   );
   document
     .querySelector("#controls .control-list")!
@@ -51,7 +51,7 @@ export function createUI() {
       `<label>Flight controls<select id="control-mode"><option value="assisted">Easy — direct steering & auto level</option><option value="advanced">Advanced — bank, loops & rolls</option></select></label>`,
     );
   document.querySelector(".flight-hints")!.innerHTML =
-    `<span><kbd>W S</kbd> CLIMB / DESCEND</span><span><kbd>A D</kbd> <b id="flight-turn-hint">TURN</b></span><span><kbd>G</kbd> FOLLOW TARGET</span><span><kbd>SPACE</kbd> BOOST</span><span><kbd>ESC</kbd> PAUSE</span>`;
+    `<span><kbd>W S</kbd> CLIMB / DESCEND</span><span><kbd>A D</kbd> <b id="flight-turn-hint">TURN</b></span><span><kbd>SHIFT</kbd> THRUST</span><span><kbd>Z</kbd> BRAKES</span><span><kbd>M</kbd> COBRA</span><span><kbd>SPACE</kbd> BOOST</span><span><kbd>ESC</kbd> PAUSE</span>`;
   document
     .querySelector("#combat-hints")!
     .insertAdjacentHTML(
@@ -59,15 +59,15 @@ export function createUI() {
       `<button id="target-follow" class="follow-button" aria-pressed="false">G · FOLLOW TARGET</button>`,
     );
   document.querySelector("#controls form > p")!.textContent =
-    "Easy controls: A/D turns directly; release the keys to level out. W/S climbs or descends. Move the mouse over the sky to steer. Combat starts with target follow enabled; manual steering takes over.";
+    "Every sortie starts on Haven's runway: Shift throttles up, Q/E (or A/D in Easy mode) steer the nosewheel, W rotates at the ROTATE cue. Easy controls: A/D turns directly; release the keys to level out. W/S climbs or descends. Move the mouse over the sky to steer. Combat starts with target follow enabled; manual steering takes over. Land on a runway under 5 m/s sink, wings level.";
   document
     .querySelector("#controls .control-list")!
     .insertAdjacentHTML(
       "beforeend",
-      `<span><kbd>G</kbd> Toggle target follow (Easy mode)</span><span><kbd>LEFT CLICK</kbd> Cannon</span><span><kbd>RIGHT CLICK</kbd> Missile — tap to queue while locking</span>`,
+      `<span><kbd>G</kbd> Toggle target follow (Easy mode)</span><span><kbd>LEFT CLICK</kbd> Cannon</span><span><kbd>RIGHT CLICK</kbd> Missile — tap to queue while locking</span><span><kbd>Z</kbd> Airbrake in the air · wheel brakes on the runway</span><span><kbd>M</kbd> Pugachev's cobra (110–190 m/s, wings level)</span><span><kbd>I</kbd> Engines off / relight (3 s spool-up)</span>`,
     );
   document.querySelector("#controls .dialog-note")!.textContent +=
-    " The AIM circle shows where to lead your cannon shots. Advanced controls in Settings restore full aerobatics.";
+    " The AIM circle shows where to lead your cannon shots. Advanced controls in Settings restore full aerobatics. Twin-engine jets steer with differential thrust: rudder and hard rolling turns throttle one engine back for faster yaw, and they fly home on one engine. Gamepad: RB airbrake, left-stick click cobra.";
 }
 export const el = <T extends HTMLElement = HTMLElement>(id: string) =>
   document.getElementById(id) as T;
