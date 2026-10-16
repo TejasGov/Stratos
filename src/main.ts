@@ -375,6 +375,7 @@ class Game {
   private setState(state: State) {
     this.state = state;
     document.body.dataset.state = state;
+    this.comms.hold(state === "paused");
     el("pause").hidden = state !== "paused";
     el("crash").hidden = state !== "crashed";
     el("hud").setAttribute("aria-hidden", String(state === "menu"));
@@ -598,6 +599,8 @@ class Game {
           this.mission.stop();
           this.buildRings();
           this.combat.start("intercept", this.flight);
+          this.resetRadio();
+          this.comms.say("intercept", 0.6);
           this.targetFollow = this.settings.controlMode === "assisted";
           this.toast(
             "Acquire the incoming flight, then hold lock and fire.",
@@ -1810,7 +1813,8 @@ class Game {
   private terrainAhead() {
     const p = this.flight.position,
       v = this.flight.velocity;
-    for (let t = 1; t <= 4; t++) {
+    // Half-second steps keep ridgelines from slipping between samples at speed.
+    for (let t = 0.5; t <= 4; t += 0.5) {
       const x = p.x + v.x * t,
         z = p.z + v.z * t;
       if (p.y + v.y * t < Math.max(0, heightAt(x, z)) + 25) return true;

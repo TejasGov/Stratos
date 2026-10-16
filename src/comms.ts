@@ -122,6 +122,7 @@ export class Comms {
   private timers = new Set<ReturnType<typeof setTimeout>>();
   /** Bumped by clear() so a line still decoding cannot start afterwards. */
   private epoch = 0;
+  private held = false;
   constructor(private audio: FlightAudio) {}
   /** Starts fetching every line once audio is running. */
   preload() {
@@ -152,16 +153,28 @@ export class Comms {
     const spec = LINES[line];
     if (now - (this.last.get(line) ?? -Infinity) < spec.cooldown) return;
     this.last.set(line, now);
-    if (this.current) {
-      if (spec.priority > LINES[this.current.line].priority) {
-        // Urgent traffic steps on whatever is being said.
-        this.queue = [];
-        this.stopCurrent();
-        this.play(line);
-      } else if (!this.queue.includes(line) && this.queue.length < 2) this.queue.push(line);
-      return;
-    }
-    this.play(line);
+    if (this.current && !this.held && spec.priority > LINES[this.current.line].priority) {
+      this.interrupt();
+      this.play(line);
+    } else if (this.current || this.held) this.enqueue(line);
+    else this.play(line);
+  }
+  /**
+   * While held (paused, photo mode) the current sentence finishes but nothing
+   * new starts; queued and delayed calls wait for the release.
+   */
+  hold(held: boolean) {
+    if (this.held === held) return;
+    this.held = held;
+    if (!held) this.next();
+  }
+  private enqueue(line: Line) {
+    if (this.queue.includes(line)) return;
+    const priority = LINES[line].priority;
+    // Chatter is capped; anything priority 3+ is never dropped.
+    if (priority < 3 && this.queue.length >= 2) return;
+    const at = this.queue.findIndex((queued) => LINES[queued].priority < priority);
+    this.queue.splice(at < 0 ? this.queue.length : at, 0, line);
   }
   /** Drops everything in flight and queued (menu, restart). */
   clear() {
@@ -171,6 +184,13 @@ export class Comms {
     this.queue = [];
     this.stopCurrent();
     this.onSubtitle?.(null);
+  }
+  /** Urgent traffic steps on chatter; calls that matter are said again after. */
+  private interrupt() {
+    const cut = this.current?.line;
+    this.queue = this.queue.filter((queued) => LINES[queued].priority >= 3);
+    this.stopCurrent();
+    if (cut && LINES[cut].priority >= 3 && !this.queue.includes(cut)) this.queue.unshift(cut);
   }
   private stopCurrent() {
     const current = this.current;
@@ -190,14 +210,16 @@ export class Comms {
     if (epoch !== this.epoch) return;
     const radio = this.audio.radio();
     // A suspended context would never end the line and the channel would stay busy.
-    if (!radio || !buffer || !this.enabled || radio.context.state !== "running") return this.next();
+    if (!radio || !buffer || !this.enabled || radio.context.state !== "running") {
+      // An interrupt that cannot play must not leave the old subtitle up.
+      if (!this.current) this.onSubtitle?.(null);
+      return this.next();
+    }
+    if (this.held) return this.enqueue(line);
     if (this.current) {
       // Something more urgent started while this line was loading.
-      if (LINES[line].priority <= LINES[this.current.line].priority) {
-        if (!this.queue.includes(line)) this.queue.unshift(line);
-        return;
-      }
-      this.stopCurrent();
+      if (LINES[line].priority <= LINES[this.current.line].priority) return this.enqueue(line);
+      this.interrupt();
     }
     const ctx = radio.context;
     const start = ctx.currentTime + 0.08;
@@ -229,7 +251,8 @@ export class Comms {
     };
   }
   private next() {
+    if (this.current || this.held) return;
     const line = this.queue.shift();
-    if (line && !this.current) this.play(line);
+    if (line) this.play(line);
   }
 }

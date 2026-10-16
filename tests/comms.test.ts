@@ -49,6 +49,7 @@ function fakeAudio() {
   return { audio: audio as unknown as FlightAudio, sources };
 }
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 test("urgent calls cut in; routine calls wait their turn", async () => {
   const { audio, sources } = fakeAudio();
@@ -74,7 +75,7 @@ test("urgent calls cut in; routine calls wait their turn", async () => {
   assert.equal(sources.length, 2);
   sources[1].end();
   assert.equal(audio.duck, 0);
-  await new Promise((resolve) => setTimeout(resolve, 500));
+  await wait(700);
   assert.equal(sources.at(-1)!.line, voiceFile("landmark"));
   comms.clear();
 });
@@ -101,4 +102,80 @@ test("disabled comms stay silent", async () => {
   comms.say("crash");
   await settle();
   assert.equal(sources.length, 0);
+});
+
+test("a call made in the gap between lines does not swallow the queue", async () => {
+  const { audio, sources } = fakeAudio();
+  const comms = new Comms(audio);
+  comms.say("takeoff");
+  await settle();
+  comms.say("landmark");
+  sources[0].end();
+  // The channel is idle for a beat; a new call takes it before the queue does.
+  comms.say("firstKill");
+  await settle();
+  sources[1].end();
+  await wait(700);
+  assert.deepEqual(
+    sources.map((s) => s.line),
+    [voiceFile("takeoff"), voiceFile("firstKill"), voiceFile("landmark")],
+  );
+  comms.clear();
+});
+
+test("important calls survive an interrupt and a full queue", async () => {
+  const { audio, sources } = fakeAudio();
+  const comms = new Comms(audio);
+  comms.say("clear");
+  await settle();
+  comms.say("landmark");
+  comms.say("routeDone");
+  // Chatter is capped at two, but an important call still gets in line.
+  comms.say("escortLost");
+  comms.say("missile");
+  await settle();
+  for (let i = 0; i < 3; i++) {
+    sources.at(-1)!.end();
+    await wait(700);
+  }
+  assert.deepEqual(
+    sources.map((s) => [s.line, s.stopped]),
+    [
+      [voiceFile("clear"), true],
+      [voiceFile("missile"), false],
+      [voiceFile("clear"), false],
+      [voiceFile("escortLost"), false],
+    ],
+  );
+  comms.clear();
+});
+
+test("an interrupt that cannot load clears the old subtitle", async () => {
+  const { audio } = fakeAudio();
+  const decode = audio.decode;
+  audio.decode = async (url: string) => {
+    if (url === voiceFile("missile")) throw new Error("offline");
+    return decode.call(audio, url);
+  };
+  const comms = new Comms(audio);
+  const subtitles: (string | null)[] = [];
+  comms.onSubtitle = (text) => subtitles.push(text);
+  comms.say("takeoff");
+  await settle();
+  comms.say("missile");
+  await settle();
+  assert.equal(subtitles.at(-1), null);
+});
+
+test("a held channel waits until it is released", async () => {
+  const { audio, sources } = fakeAudio();
+  const comms = new Comms(audio);
+  comms.hold(true);
+  comms.say("takeoff");
+  await settle();
+  assert.equal(sources.length, 0);
+  comms.hold(false);
+  await settle();
+  assert.equal(sources.at(-1)!.line, voiceFile("takeoff"));
+  comms.clear();
 });
