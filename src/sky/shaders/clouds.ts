@@ -270,7 +270,7 @@ void main() {
         float rain = smoothstep(0.5, 0.85, w.type) * smoothstep(0.3, 0.5, w.coverage);
         if (rain <= 0.0) continue;
         float curtain = texture(tShape, vec3(q.x, h * 0.3, q.y) / 2600.0 + uShapeOffset / 4600.0).g;
-        float sigma = rain * uRain * 1.3e-3 * smoothstep(0.3, 0.75, curtain);
+        float sigma = rain * uRain * 0.9e-3 * smoothstep(0.4, 0.8, curtain);
         float stepT = exp(-sigma * seg);
         vec3 sun = sunTransmittance(tTransmittance, planetC + rd * (t * 0.001), uSunDir) * uSunIlluminance;
         vec3 L = skyAmbient * 0.3 + sun * 0.025;

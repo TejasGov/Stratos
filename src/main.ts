@@ -424,6 +424,7 @@ class Game {
       .forEach((button) => {
         button.onclick = () => this.startAscent();
       });
+    this.bindPhoto();
     el("hangar-prev").onclick = () => this.selectAircraft(-1);
     el("hangar-next").onclick = () => this.selectAircraft(1);
     document.querySelectorAll<HTMLButtonElement>("#time-chips button").forEach((button) => {
@@ -523,7 +524,17 @@ class Game {
     });
     window.addEventListener("keydown", (e) => {
       if (document.querySelector("dialog[open]")) return;
+      if (e.code === "KeyP" && !e.repeat && this.loaded) {
+        if (this.photo) this.exitPhoto();
+        else if (this.state === "flight" || this.state === "menu" || this.state === "paused")
+          this.enterPhoto();
+        return;
+      }
       if (e.code === "Escape") {
+        if (this.photo) {
+          this.exitPhoto();
+          return;
+        }
         if (this.state === "flight") this.pause();
         else if (this.state === "paused") this.resume();
         return;
@@ -745,21 +756,30 @@ class Game {
   private approachStorm() {
     const f = this.flight;
     const clouds = this.sky.clouds;
+    const heading = Math.atan2(f.velocity.x, f.velocity.z);
+    const dx = Math.sin(heading),
+      dz = Math.cos(heading);
+    // The approach must stay low over the sea or low islands: the showcase
+    // flies beneath the 1.25 km cloud base.
+    const lowRun = (x: number, z: number) => {
+      for (let d = -4000; d <= 9000; d += 1000)
+        if (heightAt(x + dx * d, z + dz * d) > 450) return false;
+      return true;
+    };
     let best: { x: number; z: number } | undefined;
-    for (let r = 2000; r <= 60000 && !best; r += 2000)
+    for (let r = 2000; r <= 70000 && !best; r += 2000)
       for (let k = 0, n = Math.ceil((2 * Math.PI * r) / 2000); k < n; k++) {
         const a = (k / n) * Math.PI * 2;
         const x = f.position.x + Math.cos(a) * r,
           z = f.position.z + Math.sin(a) * r;
-        if (clouds.weatherAt(x, z).type > 0.75) {
+        if (clouds.weatherAt(x, z).type > 0.75 && lowRun(x, z)) {
           best = { x, z };
           break;
         }
       }
     if (!best) return;
-    const heading = Math.atan2(f.velocity.x, f.velocity.z);
-    f.position.x = best.x - Math.sin(heading) * 3500;
-    f.position.z = best.z - Math.cos(heading) * 3500;
+    f.position.x = best.x - dx * 3500;
+    f.position.z = best.z - dz * 3500;
     f.previous.copy(f.position);
     this.showcaseStarted = true;
     this.showcaseAltitude = 800;
@@ -786,6 +806,132 @@ class Game {
     document.querySelectorAll<HTMLButtonElement>("#weather-chips button").forEach((b) => {
       b.setAttribute("aria-pressed", String(b.dataset.weather === this.settings.weather));
     });
+  }
+  // Photo mode: the simulation holds still while the camera orbits the jet.
+  private photo = false;
+  private photoReturn: "menu" | "flight" = "flight";
+  private photoOrbit = { yaw: 0, pitch: 0.12, distance: 38 };
+  private photoFov = 50;
+  private photoSaved = { hours: 0, weather: "fair" as WeatherName };
+  private captureNext = false;
+  private enterPhoto() {
+    if (this.photo || !this.loaded) return;
+    this.photoReturn = this.state === "menu" ? "menu" : "flight";
+    const rel = this.camera.position.clone().sub(this.local);
+    const distance = Math.max(1, rel.length());
+    this.photoOrbit.distance = T.MathUtils.clamp(distance, 10, 400);
+    this.photoOrbit.yaw = Math.atan2(rel.x, rel.z);
+    this.photoOrbit.pitch = Math.asin(T.MathUtils.clamp(rel.y / distance, -0.9, 0.9));
+    this.photoFov = this.camera.fov;
+    this.photoSaved = { hours: this.sky.time.hours, weather: this.sky.weather };
+    this.photo = true;
+    this.setState("paused");
+    el("pause").hidden = true;
+    el("photo").hidden = false;
+    document.body.dataset.photo = "true";
+    this.sky.clouds.converge = 2;
+    this.sky.lightning.timeScale = 0;
+    this.syncPhoto();
+  }
+  private exitPhoto() {
+    if (!this.photo) return;
+    this.photo = false;
+    el("photo").hidden = true;
+    delete document.body.dataset.photo;
+    this.sky.exposureBias = 0;
+    this.sky.clouds.converge = 1;
+    this.sky.lightning.clear();
+    this.sky.lightning.timeScale = 1;
+    this.sky.time.hours = this.photoSaved.hours;
+    if (this.sky.weather !== this.photoSaved.weather) this.sky.setWeather(this.photoSaved.weather);
+    this.plane.visible = true;
+    this.cameraReady = false;
+    if (this.photoReturn === "menu") this.setState("menu");
+    else this.setState("paused");
+  }
+  private syncPhoto() {
+    const hours = this.sky.time.hours;
+    el<HTMLInputElement>("photo-time").value = String(hours);
+    el("photo-time-out").textContent = `${String(Math.floor(hours)).padStart(2, "0")}:${String(Math.floor((hours % 1) * 60)).padStart(2, "0")}`;
+    el<HTMLInputElement>("photo-exposure").value = String(this.sky.exposureBias);
+    el("photo-exposure-out").textContent = `${this.sky.exposureBias >= 0 ? "+" : ""}${this.sky.exposureBias.toFixed(1)} EV`;
+    el<HTMLInputElement>("photo-fov").value = String(Math.round(this.photoFov));
+    // Full-frame equivalent focal length for the vertical field of view.
+    el("photo-fov-out").textContent = `${Math.round(12 / Math.tan(T.MathUtils.degToRad(this.photoFov) / 2))} mm`;
+    document.querySelectorAll<HTMLButtonElement>("#photo-weather button").forEach((b) => {
+      b.setAttribute("aria-pressed", String(b.dataset.photoWeather === this.sky.weather));
+    });
+    el("photo-aircraft").setAttribute("aria-pressed", String(this.plane.visible));
+  }
+  /** Freezes a strike in front of the camera, a few kilometres out. */
+  private photoLightning() {
+    const direction = this.camera.getWorldDirection(new T.Vector3());
+    const side = Math.random() < 0.5 ? -1 : 1;
+    const distance = 5000 + Math.random() * 4000;
+    const lateral = side * (800 + Math.random() * 2200);
+    const x = this.cameraGlobal.x + direction.x * distance - direction.z * lateral,
+      z = this.cameraGlobal.z + direction.z * distance + direction.x * lateral;
+    this.sky.lightning.clear();
+    this.sky.lightning.strike(x, z, this.cameraGlobal);
+  }
+  private bindPhoto() {
+    el("photo-button").onclick = () => this.enterPhoto();
+    el("photo-exit").onclick = () => this.exitPhoto();
+    el("photo-capture").onclick = () => {
+      this.captureNext = true;
+      const panel = el("photo");
+      panel.classList.remove("flash");
+      void panel.offsetWidth;
+      panel.classList.add("flash");
+    };
+    el("photo-lightning").onclick = () => this.photoLightning();
+    el("photo-aircraft").onclick = () => {
+      this.plane.visible = !this.plane.visible;
+      this.syncPhoto();
+    };
+    el<HTMLInputElement>("photo-time").oninput = (e) => {
+      this.sky.time.hours = Number((e.target as HTMLInputElement).value);
+      this.syncPhoto();
+    };
+    el<HTMLInputElement>("photo-exposure").oninput = (e) => {
+      this.sky.exposureBias = Number((e.target as HTMLInputElement).value);
+      this.syncPhoto();
+    };
+    el<HTMLInputElement>("photo-fov").oninput = (e) => {
+      this.photoFov = Number((e.target as HTMLInputElement).value);
+      this.syncPhoto();
+    };
+    document.querySelectorAll<HTMLButtonElement>("#photo-weather button").forEach((button) => {
+      button.onclick = () => {
+        this.sky.setWeather(button.dataset.photoWeather as WeatherName);
+        this.syncPhoto();
+      };
+    });
+    const canvas = this.renderer.domElement;
+    let dragging: { x: number; y: number } | undefined;
+    canvas.addEventListener("pointerdown", (e) => {
+      if (!this.photo) return;
+      dragging = { x: e.clientX, y: e.clientY };
+      canvas.setPointerCapture(e.pointerId);
+    });
+    canvas.addEventListener("pointermove", (e) => {
+      if (!this.photo || !dragging) return;
+      const o = this.photoOrbit;
+      o.yaw -= (e.clientX - dragging.x) * 0.006;
+      o.pitch = T.MathUtils.clamp(o.pitch + (e.clientY - dragging.y) * 0.005, -1.4, 1.4);
+      dragging = { x: e.clientX, y: e.clientY };
+    });
+    canvas.addEventListener("pointerup", () => (dragging = undefined));
+    canvas.addEventListener(
+      "wheel",
+      (e) => {
+        if (!this.photo) return;
+        e.preventDefault();
+        const o = this.photoOrbit;
+        o.distance = T.MathUtils.clamp(o.distance * Math.exp(e.deltaY * 0.0012), 8, 2500);
+      },
+      { passive: false },
+    );
   }
   private resume() {
     this.last = 0;
@@ -1081,6 +1227,18 @@ class Game {
     this.cameraGlobal.copy(this.camera.position).add(this.world.origin);
     this.world.updateTerrain(this.renderer, this.cameraGlobal);
     this.sky.render(this.scene, this.camera, this.cameraGlobal, dt);
+    if (this.captureNext) {
+      // Read the drawing buffer in the same task as the render, before it is presented.
+      this.captureNext = false;
+      this.renderer.domElement.toBlob((blob) => {
+        if (!blob) return;
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = `stratos-${new Date().toISOString().replace(/[:.]/g, "-")}.png`;
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(link.href), 5000);
+      }, "image/png");
+    }
     this.drawHud();
     if (!el("debug").hidden)
       el("debug").textContent =
@@ -1104,10 +1262,10 @@ class Game {
         quaternion: this.plane.quaternion,
         mach: flying ? this.flight.mach : 0,
         gLoad: flying ? this.flight.gLoad : 1,
-        boost: this.flight.boost && flying,
+        boost: this.flight.boost && (flying || this.photo),
         throttle: this.flight.throttle,
         altitude: this.flight.position.y,
-        active: this.state === "flight" || this.state === "menu",
+        active: this.state === "flight" || this.state === "menu" || this.photo,
       },
       this.world.origin,
     );
@@ -1147,6 +1305,23 @@ class Game {
       this.look.copy(this.debugCamera.target).sub(this.world.origin);
       this.camera.lookAt(this.look);
       this.camera.fov = this.debugCamera.fov ?? 56;
+      this.updateClipPlanes();
+      this.camera.updateProjectionMatrix();
+      return;
+    }
+    if (this.photo) {
+      const o = this.photoOrbit;
+      this.offset
+        .set(Math.sin(o.yaw) * Math.cos(o.pitch), Math.sin(o.pitch), Math.cos(o.yaw) * Math.cos(o.pitch))
+        .multiplyScalar(o.distance)
+        .add(this.local);
+      const origin = this.world.origin;
+      const ground = Math.max(0, heightAt(this.offset.x + origin.x, this.offset.z + origin.z)) - origin.y + 4;
+      this.offset.y = Math.max(this.offset.y, ground);
+      this.camera.position.copy(this.offset);
+      this.camera.up.set(0, 1, 0);
+      this.camera.lookAt(this.local);
+      this.camera.fov = this.photoFov;
       this.updateClipPlanes();
       this.camera.updateProjectionMatrix();
       return;
@@ -1307,7 +1482,7 @@ class Game {
   }
   /** Feeds the conformal canvas HUD every frame while flying. */
   private drawHud() {
-    if (this.state === "menu" || this.followCamera || this.debugCamera) {
+    if (this.state === "menu" || this.photo || this.followCamera || this.debugCamera) {
       this.hud.canvas.style.display = "none";
       return;
     }
