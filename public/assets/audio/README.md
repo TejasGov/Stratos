@@ -20,4 +20,6 @@ one-shots are 96 kbps MP3.
 | `explosion.mp3` | Mid-air explosion of a fighter jet, deep heavy boom with metal debris and a fiery whoosh | |
 
 Every layer has a synthesized Web Audio fallback, so the game still sounds right if a file fails to load.
-Lock and missile-warning tones stay synthesized by design.
+Lock and missile-warning tones stay synthesized by design, as do the flare salvo (dispenser
+thumps, then a sputtering magnesium fizz) and the radio's squelch, static and dropouts: the
+ElevenLabs credits had run out by the time those were added.

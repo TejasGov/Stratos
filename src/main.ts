@@ -1438,7 +1438,7 @@ class Game {
         if (event.player) this.audio.cue(event.type);
       } else if (event.type === "flare") {
         this.effects.emitExplosion(event.position, 0.2);
-        this.audio.cue("missile");
+        this.audio.cue("flare");
       } else if (event.type === "hit") {
         if (event.player) this.shakeAmount = this.settings.shake ? 0.8 : 0;
         else if (event.entityId !== -1) this.hitUntil = this.time + 0.18;
@@ -1793,6 +1793,9 @@ class Game {
   }
   /** Calls driven by flight state rather than discrete events. */
   private radioCalls() {
+    // Storms and distance from Haven make the link rougher.
+    this.comms.interference =
+      0.2 + (this.sky.weather === "storm" ? 0.45 : 0) + Math.min(0.2, this.flight.position.y / 150000);
     const next = RADIO_MILESTONES[this.radio.milestone];
     if (next && this.flight.position.y >= next[0]) {
       this.radio.milestone++;

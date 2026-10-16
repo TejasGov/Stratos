@@ -113,10 +113,16 @@ export const voiceFile = (line: Line) =>
  */
 export class Comms {
   enabled = true;
+  /** 0..1: how rough the link is (static and dropouts); storms make it worse. */
+  interference = 0.25;
   /** Shows (text) or hides (null) the subtitle. */
   onSubtitle?: (text: string | null) => void;
   private buffers = new Map<Line, Promise<AudioBuffer | undefined>>();
-  private current?: { line: Line; source: AudioBufferSourceNode };
+  private current?: {
+    line: Line;
+    source: AudioBufferSourceNode;
+    link?: ReturnType<FlightAudio["transmission"]>;
+  };
   private queue: Line[] = [];
   private last = new Map<Line, number>();
   private timers = new Set<ReturnType<typeof setTimeout>>();
@@ -197,6 +203,7 @@ export class Comms {
     if (!current) return;
     this.current = undefined;
     current.source.onended = null;
+    current.link?.close();
     try {
       current.source.stop();
     } catch {
@@ -226,14 +233,18 @@ export class Comms {
     this.audio.squelch(start - 0.06);
     const source = ctx.createBufferSource();
     source.buffer = buffer;
-    source.connect(radio.input);
+    // The last call goes out over a dying link.
+    const interference = line === "crash" ? 0.5 : this.interference;
+    const link = this.audio.transmission(start, buffer.duration, interference);
+    source.connect(link?.input ?? radio.input);
     source.start(start);
-    this.current = { line, source };
+    this.current = { line, source, link };
     this.audio.duck = 1;
     this.onSubtitle?.(LINES[line].text);
     source.onended = () => {
       source.disconnect();
       if (this.current?.source !== source) return;
+      this.current.link?.close();
       this.current = undefined;
       this.audio.duck = 0;
       this.audio.squelch(ctx.currentTime, 0.18);

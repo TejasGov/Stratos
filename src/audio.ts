@@ -33,6 +33,8 @@ export class FlightAudio {
   private roar?: GainNode;
   private roarFilter?: BiquadFilterNode;
   private noise?: AudioBuffer;
+  /** Radio static: hiss with sparse crackle, looped under transmissions. */
+  private crackle?: AudioBuffer;
   private samples = new Map<Sample, AudioBuffer>();
   private loops: Partial<Record<LoopName, Loop>> = {};
   private gun?: { source: AudioBufferSourceNode; gain: GainNode };
@@ -158,8 +160,9 @@ export class FlightAudio {
       };
     }
   }
-  cue(kind: "gun" | "missile" | "lock" | "warning" | "explosion") {
+  cue(kind: "gun" | "missile" | "lock" | "warning" | "explosion" | "flare") {
     if (!this.ready()) return;
+    if (kind === "flare") return this.flares();
     const ctx = this.context!;
     if (kind === "gun" && this.samples.has("cannon")) {
       this.holdGun();
@@ -241,6 +244,23 @@ export class FlightAudio {
       this.noise = this.context.createBuffer(1, this.context.sampleRate * 3, this.context.sampleRate);
       const white = this.noise.getChannelData(0);
       for (let i = 0; i < white.length; i++) white[i] = Math.random() * 2 - 1;
+      const rate = this.context.sampleRate;
+      this.crackle = this.context.createBuffer(1, rate * 4, rate);
+      const crackle = this.crackle.getChannelData(0);
+      let pop = 0,
+        popLevel = 0;
+      for (let i = 0; i < crackle.length; i++) {
+        if (pop <= 0 && Math.random() < 35 / rate) {
+          pop = rate * (0.002 + Math.random() * 0.012);
+          popLevel = 0.4 + Math.random() * 0.7;
+        }
+        pop--;
+        popLevel *= 0.9992;
+        // The hiss breathes three times per loop so the seam never shows.
+        const breath = 0.8 + 0.2 * Math.sin((i / crackle.length) * Math.PI * 6);
+        crackle[i] =
+          (0.3 * breath + (pop > 0 ? popLevel : 0)) * (Math.random() * 2 - 1);
+      }
       const roarSource = this.context.createBufferSource();
       roarSource.buffer = this.noise;
       roarSource.loop = true;
@@ -300,6 +320,81 @@ export class FlightAudio {
     }
     return { context: this.context, input: this.radioInput };
   }
+  /**
+   * Opens the channel for one transmission starting at `at`: carrier hiss
+   * under the voice and, with `interference` (0..1), moments where the
+   * signal breaks up. Returns the node the voice plugs into.
+   */
+  transmission(at: number, duration: number, interference: number) {
+    const radio = this.radio();
+    if (!radio || !this.crackle) return undefined;
+    const ctx = radio.context;
+    const voice = ctx.createGain();
+    // Radios ride the voice hard, so quiet words still clear the static.
+    const compressor = ctx.createDynamicsCompressor();
+    compressor.threshold.value = -34;
+    compressor.knee.value = 8;
+    compressor.ratio.value = 5;
+    compressor.attack.value = 0.004;
+    compressor.release.value = 0.2;
+    voice.connect(compressor);
+    compressor.connect(radio.input);
+    const hiss = ctx.createBufferSource();
+    hiss.buffer = this.crackle;
+    hiss.loop = true;
+    const carrier = ctx.createGain();
+    const level = 0.04 + 0.1 * interference;
+    carrier.gain.setValueAtTime(0, at - 0.06);
+    carrier.gain.linearRampToValueAtTime(level, at);
+    hiss.connect(carrier);
+    carrier.connect(radio.input);
+    hiss.start(at - 0.06, Math.random() * this.crackle.duration);
+    // Dropouts: the voice cuts under a burst of static, sometimes twice.
+    // The closing words are left alone; that is usually where the point is.
+    const count =
+      Math.floor(Math.random() * interference * 3) + (Math.random() < interference ? 1 : 0);
+    const times = Array.from({ length: duration > 2 ? count : 0 }, () =>
+      at + 0.5 + Math.random() * (duration * 0.7 - 0.5),
+    ).sort((a, b) => a - b);
+    let free = 0;
+    for (const time of times) {
+      if (time < free) continue;
+      let t = time;
+      for (let cut = Math.random() < 0.4 ? 2 : 1; cut > 0; cut--) {
+        const length = 0.04 + Math.random() * 0.09;
+        voice.gain.setValueAtTime(1, t);
+        voice.gain.linearRampToValueAtTime(0.05, t + 0.01);
+        voice.gain.setValueAtTime(0.05, t + length);
+        voice.gain.linearRampToValueAtTime(1, t + length + 0.015);
+        carrier.gain.setValueAtTime(level, t);
+        carrier.gain.linearRampToValueAtTime(Math.min(0.6, level * 4), t + 0.008);
+        carrier.gain.setValueAtTime(Math.min(0.6, level * 4), t + length);
+        carrier.gain.linearRampToValueAtTime(level, t + length + 0.02);
+        t += length + 0.05 + Math.random() * 0.05;
+      }
+      free = t + 0.4;
+    }
+    let open = true;
+    return {
+      input: voice as AudioNode,
+      /** Drops the carrier; call when the voice ends or is cut off. */
+      close() {
+        if (!open) return;
+        open = false;
+        const now = ctx.currentTime;
+        voice.gain.cancelScheduledValues(now);
+        carrier.gain.cancelScheduledValues(now);
+        carrier.gain.setTargetAtTime(0, now, 0.025);
+        hiss.stop(now + 0.2);
+        hiss.onended = () => {
+          hiss.disconnect();
+          carrier.disconnect();
+          voice.disconnect();
+          compressor.disconnect();
+        };
+      },
+    };
+  }
   /** Push-to-talk click: a short burst of band-limited static. */
   squelch(at: number, level = 0.25) {
     const radio = this.radio();
@@ -319,6 +414,64 @@ export class FlightAudio {
       source.disconnect();
       gain.disconnect();
     };
+  }
+  /** Countermeasure salvo: a dispenser thump per cartridge, then the magnesium fizz. */
+  private flares() {
+    const ctx = this.context!;
+    const now = ctx.currentTime;
+    for (let i = 0; i < 3; i++) {
+      const at = now + i * 0.1 + Math.random() * 0.025;
+      const end = at + 1.1 + Math.random() * 0.4;
+      const pop = ctx.createBufferSource();
+      pop.buffer = this.noise!;
+      const band = ctx.createBiquadFilter();
+      band.type = "bandpass";
+      band.frequency.value = 700 + Math.random() * 600;
+      band.Q.value = 0.9;
+      const popGain = ctx.createGain();
+      popGain.gain.setValueAtTime(0.0001, at);
+      popGain.gain.exponentialRampToValueAtTime(0.35, at + 0.003);
+      popGain.gain.exponentialRampToValueAtTime(0.0001, at + 0.1);
+      const thump = ctx.createOscillator();
+      thump.frequency.setValueAtTime(120, at);
+      thump.frequency.exponentialRampToValueAtTime(40, at + 0.12);
+      const thumpGain = ctx.createGain();
+      thumpGain.gain.setValueAtTime(0.0001, at);
+      thumpGain.gain.exponentialRampToValueAtTime(0.22, at + 0.004);
+      thumpGain.gain.exponentialRampToValueAtTime(0.0001, at + 0.15);
+      // The flare lights and sputters as it falls away behind the jet.
+      const fizz = ctx.createBufferSource();
+      fizz.buffer = this.noise!;
+      fizz.loop = true;
+      const highpass = ctx.createBiquadFilter();
+      highpass.type = "highpass";
+      highpass.frequency.setValueAtTime(3200, at);
+      highpass.frequency.exponentialRampToValueAtTime(1100, end);
+      const fizzGain = ctx.createGain();
+      fizzGain.gain.setValueAtTime(0, at);
+      for (let t = at + 0.05; t < end; t += 0.025 + Math.random() * 0.03) {
+        const fade = 1 - (t - at) / (end - at);
+        fizzGain.gain.linearRampToValueAtTime(0.16 * fade * (0.4 + Math.random() * 0.6), t);
+      }
+      fizzGain.gain.linearRampToValueAtTime(0, end + 0.05);
+      pop.connect(band);
+      band.connect(popGain);
+      popGain.connect(this.master!);
+      thump.connect(thumpGain);
+      thumpGain.connect(this.master!);
+      fizz.connect(highpass);
+      highpass.connect(fizzGain);
+      fizzGain.connect(this.master!);
+      pop.start(at, Math.random() * 2, 0.12);
+      thump.start(at);
+      thump.stop(at + 0.16);
+      fizz.start(at, Math.random() * 2);
+      fizz.stop(end + 0.1);
+      fizz.onended = () => {
+        for (const node of [pop, band, popGain, thump, thumpGain, fizz, highpass, fizzGain])
+          node.disconnect();
+      };
+    }
   }
   /** Fetches and decodes the recorded layers in the background. */
   private loadSamples() {

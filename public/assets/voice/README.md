@@ -5,8 +5,10 @@ with **ElevenLabs v4** (`eleven_v4`) using the library voice **Eryn – Strong F
 Commander**, directed with inline audio tags. Two takes were generated per line and the take was
 checked with a speech-to-text pass against the script; files are trimmed, loudness-matched to
 about −19 LUFS with a −1 dB limiter and stored as 80 kbps mono MP3. In game they run through a
-band-limited radio chain (300 Hz–3.4 kHz, light saturation) with a squelch click either side,
-and the engine and wind beds duck underneath.
+compressed, band-limited radio chain (300 Hz–3.4 kHz, light saturation) with a squelch click
+either side and carrier static underneath; the engine and wind beds duck while she talks. The
+link gets rougher in storms and at altitude, with the odd dropout where the signal breaks up
+(never over the closing words), and the crash call goes out over a failing link.
 
 | File | When | Performance prompt |
 | --- | --- | --- |
