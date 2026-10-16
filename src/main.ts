@@ -11,6 +11,7 @@ import { FlightAudio } from "./audio";
 import { createUI, el } from "./ui";
 import { Hud } from "./ui/Hud";
 import { FrameTelemetry } from "./render/FrameTelemetry";
+import { DynamicResolution } from "./render/DynamicResolution";
 import {
   FlightInput,
   type CombatAction,
@@ -55,6 +56,7 @@ interface Save {
   weather?: WeatherName;
   ascentBest?: number;
   aircraft?: string;
+  dynamicResolution?: boolean;
 }
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 createUI();
@@ -95,7 +97,9 @@ class Game {
     hours: 17.6,
     weather: "fair" as WeatherName,
     aircraft: "sf35",
+    dynamicResolution: true,
   };
+  private resolution = new DynamicResolution();
   /** Ascent challenge: climb from the sea to 30 km against the clock. */
   ascent = { active: false, done: false, time: 0, best: undefined as number | undefined };
   private showcaseTime = 0;
@@ -512,6 +516,12 @@ class Game {
     el<HTMLInputElement>("audio-setting").onchange = (e) => {
       this.audio.enabled = (e.target as HTMLInputElement).checked;
       this.syncSettings();
+      this.save();
+    };
+    el<HTMLInputElement>("dynres-setting").onchange = (e) => {
+      this.settings.dynamicResolution = (e.target as HTMLInputElement).checked;
+      this.resolution.reset();
+      this.applyQuality();
       this.save();
     };
     el<HTMLInputElement>("debug-setting").onchange = (e) => {
@@ -1037,6 +1047,15 @@ class Game {
     this.last = timestamp;
     this.time += dt;
     if (this.state === "flight") this.telemetry.record(frameMs, this.time);
+    // Hold the frame rate in flight and on the title screen by trading resolution.
+    if (
+      this.settings.dynamicResolution &&
+      this.loaded &&
+      (this.state === "flight" || this.state === "menu") &&
+      !document.hidden &&
+      this.resolution.update(frameMs, dt)
+    )
+      this.applyQuality();
     this.fps = T.MathUtils.damp(this.fps, 1 / Math.max(dt, 0.001), 2, dt);
     engine.update();
     if (this.state === "flight") {
@@ -1242,7 +1261,7 @@ class Game {
     this.drawHud();
     if (!el("debug").hidden)
       el("debug").textContent =
-        `${this.fps.toFixed(0)} FPS\nFRAME median ${this.telemetry.median.toFixed(1)} / p95 ${this.telemetry.p95.toFixed(1)} ms\n${this.renderer.info.render.calls} draw calls\n${this.renderer.info.render.triangles.toLocaleString()} triangles\n${this.world.stats.patches} terrain patches / ${this.world.stats.chunks} scenery chunks\n${this.effects.stats.smoke} smoke / ${this.effects.stats.flame} flame\n${this.physics?.status.colliders ?? 0} Rapier colliders\n${this.renderer.info.memory.geometries} geometries / ${this.renderer.info.memory.textures} textures\nORIGIN ${this.world.origin.x}, ${this.world.origin.z}`;
+        `${this.fps.toFixed(0)} FPS\nFRAME median ${this.telemetry.median.toFixed(1)} / p95 ${this.telemetry.p95.toFixed(1)} ms\nRENDER SCALE ${(this.settings.dynamicResolution ? this.resolution.scale : 1).toFixed(2)}\n${this.renderer.info.render.calls} draw calls\n${this.renderer.info.render.triangles.toLocaleString()} triangles\n${this.world.stats.patches} terrain patches / ${this.world.stats.chunks} scenery chunks\n${this.effects.stats.smoke} smoke / ${this.effects.stats.flame} flame\n${this.physics?.status.colliders ?? 0} Rapier colliders\n${this.renderer.info.memory.geometries} geometries / ${this.renderer.info.memory.textures} textures\nORIGIN ${this.world.origin.x}, ${this.world.origin.z}`;
   }
   /** Vapour, plume, contrails and the camera-side speed effects. */
   private updateSpectacle(dt: number) {
@@ -1763,6 +1782,7 @@ class Game {
       el<HTMLSelectElement>(`bind-${action}`).value =
         this.inputActions.bindings[action];
     el<HTMLInputElement>("shake-setting").checked = this.settings.shake;
+    el<HTMLInputElement>("dynres-setting").checked = this.settings.dynamicResolution;
     el<HTMLInputElement>("hud-scale").value = String(this.settings.hudScale);
     document.documentElement.style.setProperty(
       "--hud-scale",
@@ -1791,7 +1811,8 @@ class Game {
           ? 2
           : 1.5;
     this.renderer.shadowMap.enabled = this.settings.quality !== "low";
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, ratio));
+    const scale = this.settings.dynamicResolution ? this.resolution.scale : 1;
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, ratio) * scale);
     this.renderer.setSize(
       innerWidth * (this.settings.quality === "low" ? 0.8 : 1),
       innerHeight * (this.settings.quality === "low" ? 0.8 : 1),
@@ -1820,6 +1841,7 @@ class Game {
       if (s.weather && s.weather in WEATHER) this.settings.weather = s.weather;
       if (Number.isFinite(s.ascentBest) && s.ascentBest! > 0) this.ascent.best = s.ascentBest;
       if (s.aircraft && FLEET.some((a) => a.id === s.aircraft)) this.settings.aircraft = s.aircraft;
+      this.settings.dynamicResolution = s.dynamicResolution !== false;
       this.settings.quality = ["low", "medium", "high"].includes(s.quality)
         ? s.quality
         : "medium";
