@@ -8,6 +8,7 @@ import { heightAt, renderedHeightAt, SEED } from "./world/terrain";
 import { Flight, neutral } from "./flight";
 import { Mission, landmarks, routes, type RouteId } from "./missions";
 import { FlightAudio } from "./audio";
+import { Comms } from "./comms";
 import { createUI, el } from "./ui";
 import { Hud } from "./ui/Hud";
 import { FrameTelemetry } from "./render/FrameTelemetry";
@@ -57,7 +58,14 @@ interface Save {
   ascentBest?: number;
   aircraft?: string;
   dynamicResolution?: boolean;
+  comms?: boolean;
 }
+/** Altitudes Haven Control calls out on the way up (metres). */
+const RADIO_MILESTONES = [
+  [11000, "tropopause"],
+  [20000, "stratosphere"],
+  [30000, "edge"],
+] as const;
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 createUI();
 class Game {
@@ -67,6 +75,7 @@ class Game {
   flight = new Flight();
   mission = new Mission();
   audio = new FlightAudio();
+  comms = new Comms(this.audio);
   world: World;
   effects: Effects;
   combat = new CombatSystem();
@@ -98,6 +107,7 @@ class Game {
     weather: "fair" as WeatherName,
     aircraft: "sf35",
     dynamicResolution: true,
+    comms: true,
   };
   private resolution = new DynamicResolution();
   /** Ascent challenge: climb from the sea to 30 km against the clock. */
@@ -112,6 +122,8 @@ class Game {
   private fps = 60;
   private telemetry = new FrameTelemetry();
   private lastThreatCue = 0;
+  /** What Haven Control has already called this flight. */
+  private radio = { milestone: 0, kills: 0, damaged: false, threat: false, terrainCue: 0 };
   private lastLock = false;
   private hitUntil = 0;
   private shakeAmount = 0;
@@ -192,7 +204,9 @@ class Game {
       if (this.settings.shake) this.shakeAmount = Math.max(this.shakeAmount, 1.6);
       this.audio.boom();
       this.hud.announce("MACH 1", "THROUGH THE SOUND BARRIER", this.time);
+      if (this.state === "flight") this.comms.say("machOne", 1.4);
     };
+    this.comms.onSubtitle = (text) => this.subtitle(text);
     this.loadSave();
     this.setState("menu");
     this.bindUI();
@@ -361,6 +375,7 @@ class Game {
   private setState(state: State) {
     this.state = state;
     document.body.dataset.state = state;
+    this.comms.hold(state === "paused");
     el("pause").hidden = state !== "paused";
     el("crash").hidden = state !== "crashed";
     el("hud").setAttribute("aria-hidden", String(state === "menu"));
@@ -522,6 +537,11 @@ class Game {
       this.syncSettings();
       this.save();
     };
+    el<HTMLInputElement>("comms-setting").onchange = (e) => {
+      this.settings.comms = (e.target as HTMLInputElement).checked;
+      this.syncSettings();
+      this.save();
+    };
     el<HTMLInputElement>("dynres-setting").onchange = (e) => {
       this.settings.dynamicResolution = (e.target as HTMLInputElement).checked;
       this.resolution.reset();
@@ -579,6 +599,8 @@ class Game {
           this.mission.stop();
           this.buildRings();
           this.combat.start("intercept", this.flight);
+          this.resetRadio();
+          this.comms.say("intercept", 0.6);
           this.targetFollow = this.settings.controlMode === "assisted";
           this.toast(
             "Acquire the incoming flight, then hold lock and fire.",
@@ -655,6 +677,7 @@ class Game {
     this.damageEmitters.clear();
     this.lastLock = false;
     this.shakeAmount = 0;
+    this.comms.clear();
     if (route) {
       this.mission.start(route);
       const gate = this.mission.gate()!;
@@ -670,10 +693,15 @@ class Game {
     this.setState("flight");
     this.targetFollow =
       !!combatMission && this.settings.controlMode === "assisted";
-    this.audio.start().catch(() => {
-      this.audio.enabled = false;
-      this.syncSettings();
-    });
+    this.audio
+      .start()
+      .then(() => this.comms.preload())
+      .catch(() => {
+        this.audio.enabled = false;
+        this.syncSettings();
+      });
+    this.resetRadio();
+    this.comms.say(combatMission ?? (route ? "routeStart" : "takeoff"), 1.5);
     this.buildRings();
     this.updateObjective();
     this.toast(
@@ -709,6 +737,9 @@ class Game {
     this.flight.velocity.set(0, 0, -240);
     this.cameraReady = false;
     Object.assign(this.ascent, { active: true, done: false, time: 0 });
+    this.resetRadio();
+    this.comms.clear();
+    this.comms.say("ascent", 1.2);
     this.updateObjective();
     this.toast(
       "Afterburner (Space) and climb. Thin air at altitude means more speed and softer controls.",
@@ -954,6 +985,7 @@ class Game {
   }
   private menu() {
     this.save();
+    this.comms.clear();
     this.mission.stop();
     this.combat.stop();
     this.combatView.clear();
@@ -1139,12 +1171,15 @@ class Game {
             message,
             this.mission.completed ? "CHALLENGE COMPLETE" : "FLIGHT LOG",
           );
+          if (this.mission.completed) this.comms.say("routeDone", 0.8);
           this.buildRings();
           this.save();
         }
         if (this.flight.crashed) {
           this.effects.emitExplosion(this.flight.position, 1.8);
           this.audio.cue("explosion");
+          this.comms.clear();
+          this.comms.say("crash", 1.6);
           el("crash-message").textContent =
             this.combat.playerHealth <= 0
               ? "Aircraft lost in combat. Restart the sortie and try a different approach."
@@ -1171,9 +1206,11 @@ class Game {
             `${landmark.name} · ${landmark.detail}`,
             "LANDMARK DISCOVERED",
           );
+          this.comms.say("landmark", 0.6);
           this.save();
         }
     }
+    if (this.state === "flight") this.radioCalls();
     if (this.state === "menu") this.showcase(dt);
     if (this.state === "flight" && this.ascent.active && !this.ascent.done) {
       this.ascent.time += dt;
@@ -1406,6 +1443,8 @@ class Game {
         if (event.player) this.shakeAmount = this.settings.shake ? 0.8 : 0;
         else if (event.entityId !== -1) this.hitUntil = this.time + 0.18;
       } else if (event.type === "complete" || event.type === "failed") {
+        if (event.type === "complete") this.comms.say("clear", 0.8);
+        else if (this.combat.status.result === "Transport lost") this.comms.say("escortLost", 0.8);
         this.toast(
           this.combat.status.result || this.combat.status.objective,
           event.type === "complete" ? "SORTIE COMPLETE" : "SORTIE ENDED",
@@ -1466,9 +1505,14 @@ class Game {
     const agl =
       this.flight.position.y -
       Math.max(0, heightAt(this.flight.position.x, this.flight.position.z));
+    const terrain = this.state === "flight" && this.terrainAhead();
+    if (terrain && this.time - this.radio.terrainCue > 1.1) {
+      this.audio.terrainAlarm();
+      this.radio.terrainCue = this.time;
+    }
     this.warningText =
       this.state === "flight"
-        ? agl < 100
+        ? agl < 100 || terrain
           ? "TERRAIN · PULL UP"
           : this.flight.speed < 85
             ? "LOW AIRSPEED · INCREASE THRUST"
@@ -1629,6 +1673,8 @@ class Game {
     el("target-follow").setAttribute("aria-pressed", String(this.targetFollow));
     el("combat-hints").textContent =
       `Left click / ${b.gun.slice(3)} gun · right click / ${b.missile.slice(3)} missile · ${b.target.slice(3)} target · ${b.flare.slice(3)} flare${this.inputActions.connected ? " · GAMEPAD" : ""}`;
+    if (status.threat && !this.radio.threat && this.state === "flight") this.comms.say("missile");
+    this.radio.threat = status.threat;
     if (status.threat && this.state === "flight") {
       this.warningText = "INCOMING MISSILE · EVADE / COUNTERMEASURE";
       if (this.time - this.lastThreatCue > 0.75) {
@@ -1737,6 +1783,49 @@ class Game {
     ctx.font = "10px monospace";
     ctx.fillText("N", size / 2 - 3, 13);
   }
+  private resetRadio() {
+    // Milestones already below the start altitude are not news.
+    const y = this.flight.position.y;
+    this.radio.milestone = RADIO_MILESTONES.filter(([altitude]) => y >= altitude).length;
+    this.radio.kills = 0;
+    this.radio.damaged = false;
+    this.radio.threat = false;
+  }
+  /** Calls driven by flight state rather than discrete events. */
+  private radioCalls() {
+    const next = RADIO_MILESTONES[this.radio.milestone];
+    if (next && this.flight.position.y >= next[0]) {
+      this.radio.milestone++;
+      this.comms.say(next[1]);
+    }
+    if (!this.combat.active || this.combat.completed || this.combat.failed) return;
+    const status = this.combat.status;
+    if (status.kills > this.radio.kills) {
+      this.comms.say(this.radio.kills === 0 ? "firstKill" : "kill", 0.5);
+      this.radio.kills = status.kills;
+    }
+    if (!this.radio.damaged && this.combat.playerHealth < 55 && this.combat.playerHealth > 0) {
+      this.radio.damaged = true;
+      this.comms.say("damaged", 0.4);
+    }
+  }
+  /** Ground-proximity look-ahead: will the current path meet terrain within 4 s? */
+  private terrainAhead() {
+    const p = this.flight.position,
+      v = this.flight.velocity;
+    // Half-second steps keep ridgelines from slipping between samples at speed.
+    for (let t = 0.5; t <= 4; t += 0.5) {
+      const x = p.x + v.x * t,
+        z = p.z + v.z * t;
+      if (p.y + v.y * t < Math.max(0, heightAt(x, z)) + 25) return true;
+    }
+    return false;
+  }
+  private subtitle(text: string | null) {
+    const box = el("comms");
+    if (text) el("comms-text").textContent = text;
+    box.classList.toggle("on", !!text);
+  }
   private toast(message: string, type = "FLIGHT LOG") {
     this.toastAnimation?.pause();
     el("toast-message").textContent = message;
@@ -1778,6 +1867,9 @@ class Game {
       this.settings.sensitivity,
     );
     el<HTMLInputElement>("audio-setting").checked = this.audio.enabled;
+    el<HTMLInputElement>("comms-setting").checked = this.settings.comms;
+    this.comms.enabled = this.settings.comms && this.audio.enabled;
+    if (!this.comms.enabled) this.comms.clear();
     el("sound").textContent = this.audio.enabled ? "♫" : "♪";
     el("sound").setAttribute("aria-pressed", String(this.audio.enabled));
   }
@@ -1823,6 +1915,7 @@ class Game {
       if (Number.isFinite(s.ascentBest) && s.ascentBest! > 0) this.ascent.best = s.ascentBest;
       if (s.aircraft && FLEET.some((a) => a.id === s.aircraft)) this.settings.aircraft = s.aircraft;
       this.settings.dynamicResolution = s.dynamicResolution !== false;
+      this.settings.comms = s.comms !== false;
       this.settings.quality = ["low", "medium", "high"].includes(s.quality)
         ? s.quality
         : "medium";

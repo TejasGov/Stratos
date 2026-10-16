@@ -72,6 +72,10 @@ Every image is a real-time frame from the game (photo mode or the title cinemati
   flare and ACES tonemapping; dynamic resolution holds the frame rate.
 - **Sound.** ElevenLabs-generated engine, afterburner, wind and rain loops, sonic boom, thunder,
   cannon, missile and explosions, with synthesized fallbacks.
+- **Haven Control on the radio.** A voiced controller briefs each sortie, calls the tropopause,
+  the stratosphere and the edge of space, laughs at your first sonic boom, shouts the missile
+  break, counts your kills and goes very quiet when you don't come back. Lines run through a
+  band-limited radio chain with squelch and subtitles; urgent calls cut in over chatter.
 
 ## The fleet
 
@@ -149,7 +153,7 @@ controls levels the aircraft. Move the mouse over the sky to steer when target f
 
 **Advanced mode**, available in Settings, restores bank-based turns and unrestricted aerobatics.
 Settings also include pitch inversion, sensitivity, remappable combat keys, camera shake, HUD
-scale, audio, dynamic resolution, three graphics presets and a performance readout.
+scale, sound, radio chatter, dynamic resolution, three graphics presets and a performance readout.
 
 Your aircraft, time of day, sky, preferences, discoveries and records are saved in the current
 browser.
@@ -202,7 +206,7 @@ hardware testing. Gamepad B fires a missile; keyboard B starts a patrol.
 | **Flight & collision** | Fixed-step simulation with interpolated rendering; ISA density, Mach, thrust lapse, wave drag and G; per-airframe performance; collision against the drawn clipmap surface with Rapier heightfields and swept checks.      |
 | **Combat**             | Bounded enemy steering, pooled missiles and tracers, predictive cannon assistance, swept moving-target hits, health and countermeasures; enemy airframes from the fleet.                                                     |
 | **Effects**            | Vapour cone, boom shells, per-engine afterburner plumes with shock diamonds, ribbon contrails and vortices, instanced smoke and fire.                                                                                        |
-| **Interface & audio**  | Canvas conformal HUD, anime.js title cinematic and transitions, hangar and photo mode; sample-based audio on a master bus, thunder delayed and low-passed by distance.                                                  |
+| **Interface & audio**  | Canvas conformal HUD, anime.js title cinematic and transitions, hangar and photo mode; sample-based audio on a master bus, thunder delayed and low-passed by distance; prioritised radio voice with subtitles and ducking.                                                  |
 
 ## Development
 
@@ -211,7 +215,8 @@ src/
 ├── main.ts              Game loop, title cinematic, hangar, photo mode and integration
 ├── aircraft.ts          Fleet: models, nozzles, wingtips and performance
 ├── flight.ts            Mach-aware flight model, Easy and Advanced handling
-├── audio.ts             Sample layers, thunder, boom and synthesized fallbacks
+├── audio.ts             Sample layers, thunder, boom, radio chain and synthesized fallbacks
+├── comms.ts             Haven Control: radio lines, priorities, cooldowns and subtitles
 ├── sky/                 Atmosphere LUTs, clouds, lightning, composite and post
 ├── world/               Height function, GPU clipmap terrain, scenery
 ├── effects/             Supersonic effects, pooled particles and trails
@@ -220,7 +225,7 @@ src/
 ├── ui/                  Canvas HUD
 ├── input/               Keyboard and standard gamepad actions
 └── physics/             Rapier collision and query world
-public/assets/           Aircraft fleet, audio and Poly Haven materials
+public/assets/           Aircraft fleet, audio, voice and Poly Haven materials
 tests/                   Simulation, terrain, combat, input, fleet and asset checks
 docs/                    Research and implementation notes
 ```
@@ -253,6 +258,10 @@ place engine effects. Cockpit interiors and animated control surfaces are not in
 **Sound.** Generated for this project with [ElevenLabs](https://elevenlabs.io) Sound Effects and
 mastered for looping; prompts and processing are listed in the
 [audio notes](public/assets/audio/README.md).
+
+**Voice.** Haven Control is voiced with ElevenLabs v4 text to speech (library voice *Eryn – Strong
+Female Military Commander*), directed with audio tags; script, prompts and mastering are in the
+[voice notes](public/assets/voice/README.md).
 
 **Terrain materials** are from [Poly Haven](https://polyhaven.com), created by **Rob Tuytel**
 ([Aerial Grass Rock](https://polyhaven.com/a/aerial_grass_rock),
