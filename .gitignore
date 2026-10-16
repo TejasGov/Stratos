@@ -7,3 +7,4 @@ meshy_output/
 .env
 .env.*
 !.env.example
+.mixamo-src/
