@@ -1,6 +1,7 @@
 import RAPIER from "@dimforge/rapier3d-compat";
 import { Quaternion, Vector3 } from "three";
 import { heightAt } from "../world/terrain";
+import { structureColliders } from "../world/baseLayout";
 
 // 16 m samples sit on the drawn 8 m clipmap grid, so the heightfield follows
 // the visible terrain.
@@ -40,10 +41,10 @@ export class CollisionWorld {
         new Vector3(2500 + i * 95, 15, -500),
         new Vector3(6, 50, 9),
       );
-    for (let i = 0; i < 6; i++)
+    for (const c of structureColliders())
       this.addObstacle(
-        new Vector3(-795, 38, -300 + i * 115),
-        new Vector3(22.5, 10, 32.5),
+        new Vector3((c.minX + c.maxX) / 2, (c.minY + c.maxY) / 2, (c.minZ + c.maxZ) / 2),
+        new Vector3((c.maxX - c.minX) / 2, (c.maxY - c.minY) / 2, (c.maxZ - c.minZ) / 2),
       );
   }
   get status() {

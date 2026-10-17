@@ -102,7 +102,7 @@ test("large scenery collision catches the bridge deck and airfield hangars", () 
     true,
   );
   assert.equal(
-    sweptCollision(new Vector3(-795, 50, -350), new Vector3(-795, 50, -250)),
+    sweptCollision(new Vector3(-594, 35, 60), new Vector3(-594, 35, 190)),
     true,
   );
 });

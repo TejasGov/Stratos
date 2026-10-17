@@ -4,6 +4,7 @@ import type { WorldQuality } from "../render/quality";
 import { terrainTargets } from "./StreamingScheduler";
 import { TerrainMaterials } from "../render/TerrainMaterials";
 import { GpuTerrain } from "./GpuTerrain";
+import { Airbase } from "./Airbase";
 
 const TREE_CANDIDATES: Record<WorldQuality, number> = {
   low: 500,
@@ -82,8 +83,9 @@ export class World {
     color: "#d8d2bd",
     roughness: 0.85,
   });
-  private airfield = new T.Group();
   private bridge = new T.Group();
+  /** The two air bases (Haven and Blackridge): parked jets, strike-target wrecks. */
+  readonly airbase: Airbase;
   /** Shadow-casting sun/moon light; the sky engine owns its colour and intensity. */
   readonly sun = new T.DirectionalLight("#fff1d9", 2.5);
   /** Direction toward the light, updated by the sky engine's time of day. */
@@ -114,7 +116,7 @@ export class World {
     this.terrain.mesh.material = this.terrainMaterials.material;
     material.dispose();
     scene.add(this.terrain.mesh);
-    this.createAirfield();
+    this.airbase = new Airbase(scene);
     this.createBridge();
   }
   get stats() {
@@ -123,38 +125,6 @@ export class World {
       patches: this.terrain.stats.patches,
       regenerated: this.terrain.stats.regenerated,
     };
-  }
-  private createAirfield() {
-    const runway = new T.Mesh(
-      new T.BoxGeometry(65, 1, 1050),
-      new T.MeshStandardMaterial({ color: "#3c4c4b", roughness: 1 }),
-    );
-    runway.position.y = 29;
-    runway.receiveShadow = true;
-    this.airfield.add(runway);
-    const markings = new T.InstancedMesh(
-      new T.BoxGeometry(3, 0.1, 23),
-      new T.MeshBasicMaterial({ color: "#ebe9cc" }),
-      22,
-    );
-    for (let i = 0; i < 22; i++) {
-      this.matrix.position.set(0, 29.6, -480 + i * 45);
-      this.matrix.scale.set(1, 1, 1);
-      this.matrix.updateMatrix();
-      markings.setMatrixAt(i, this.matrix.matrix);
-    }
-    this.airfield.add(markings);
-    for (let i = 0; i < 6; i++) {
-      const hangar = new T.Mesh(
-        new T.BoxGeometry(45, 20, 65),
-        this.buildingMaterial,
-      );
-      hangar.position.set(105, 38, -300 + i * 115);
-      hangar.castShadow = hangar.receiveShadow = true;
-      this.airfield.add(hangar);
-    }
-    this.airfield.position.set(-900, 0, 0);
-    this.scene.add(this.airfield);
   }
   private createBridge() {
     const material = new T.MeshStandardMaterial({
@@ -216,7 +186,7 @@ export class World {
           z * CHUNK - this.origin.z,
         );
       }
-    this.airfield.position.set(-900 - this.origin.x, 0, -this.origin.z);
+    this.airbase.update(_dt, this.origin, position, this.nightFactor());
     this.bridge.position.set(2500 - this.origin.x, 0, -500 - this.origin.z);
     const texel = 1800 / this.sun.shadow.mapSize.x;
     this.sun.target.position.set(
@@ -227,6 +197,12 @@ export class World {
     this.sun.position
       .copy(this.sun.target.position)
       .addScaledVector(this.lightDirection, 6500);
+  }
+  /** 0 by day to 1 in darkness, from the shadow light's colour and strength (sun, or moon after dark). */
+  private nightFactor() {
+    const c = this.sun.color;
+    const luminance = this.sun.intensity * (0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b);
+    return 1 - T.MathUtils.smoothstep(luminance, 0.15, 1.3);
   }
   /** Terrain LOD follows the camera (which may be detached from the aircraft). */
   updateTerrain(renderer: T.WebGLRenderer, cameraGlobal: T.Vector3) {
@@ -263,7 +239,7 @@ export class World {
         h = heightAt(wx, wz);
       if (h < 12 || h > 1050) continue;
       const masks = regionMasks(wx, wz);
-      if (masks.infrastructure > 0.2) continue;
+      if (masks.infrastructure > 0.01) continue;
       const town = Math.hypot(wx + 900, wz) < 1800 && h < 330;
       if (town && i % 6 === 0) {
         const s = 0.7 + hash(i + 3, cx + cz) * 1.5;
@@ -371,7 +347,8 @@ export class World {
     ]);
     const geometries = new Set<T.BufferGeometry>();
     const materials = new Set<T.Material>();
-    for (const root of [this.airfield, this.bridge]) {
+    this.airbase.dispose();
+    for (const root of [this.bridge]) {
       root.traverse((object) => {
         if (object instanceof T.Mesh) {
           geometries.add(object.geometry);

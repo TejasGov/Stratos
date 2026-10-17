@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { Vector3 } from "three";
 import { CollisionWorld } from "../src/physics/CollisionWorld";
+import { structureColliders } from "../src/world/baseLayout";
 
 test("Rapier swept proxy catches thin structures and is invariant under rebase", async () => {
   const collision = await CollisionWorld.create(() => 0);
@@ -52,7 +53,8 @@ test("Heightfield axes follow asymmetric world terrain and streaming stays bound
         new Vector3(i * 800, 0, -i * 400),
       );
     assert.ok(collision.status.terrainTiles <= 25);
-    assert.ok(collision.status.colliders <= 39);
+    // 25 terrain tiles, the bridge (8) and every air-base structure.
+    assert.ok(collision.status.colliders <= 25 + 8 + structureColliders().length);
   } finally {
     collision.dispose();
   }
