@@ -81,4 +81,12 @@ Branch `local/iter6-integration` merges the four parallel feature branches (`wip
 - **Landing and takeoff tests.** A simulated pilot now lands every jet on Haven in both control modes. Haven sits in a valley, so the approach is steep over the ridge, followed by a shallow 2° final at idle. The takeoff test now covers all nine jets.
 - **Crowds.** Each soldier gets a slight tint, only soldiers within 300 m cast shadows, and Haven cheers or stands alert when a sortie succeeds or fails.
 
+**Second follow-up (October 17).**
+- **SAMs and help.** Forward SAM sites now sit 5.5–6.5 km north of Haven, and Haven's 7 km umbrella hides the jet from enemy sensors. Tracking is slower, each battery has one missile in flight, reloads take 12 s and missile g is lower. Flares now decoy 75–97% of seekers. A prompt bar shows which key to press: throttle, rotate, flares, going low, landing, bombs.
+- **Opening cinematic.** Three close shots (PT drill, apron crew, ground crew with the jet) with the HUD hidden and the jet parked; Enter skips.
+- **Realistic speeds.** Each jet reaches its published top speed at 12 km (F-22 Mach 2.25 … F-35 Mach 1.6) through afterburner ram gain and a drag rise past the limit. Thrust and drag share a 0.3 scale, so acceleration and braking are 1–3 g; a military-power takeoff roll is 15–20 s.
+- **Cinematic sound.** ElevenLabs air rush, supersonic drone, trailer-style sonic boom and afterburner ignition, chosen by measured loop steadiness, seam and attack.
+- **War · Iron Dawn.** Four-phase sortie (intercept, low ingress through three markers, bombing with a CCIP pipper, a counterattack from 15 km north) with two AI wingmen who fight and can die, commanded by Citadel (nine British-voiced lines). The minimap widens to 20 km.
+- **Town buildings.** Poly Haven Painted Plaster Wall (CC0), triplanar in world space.
+
 **Not yet verified.** Performance at dusk on a real GPU with explosions and flares on screen, and physical gamepads. The landing is checked with a scripted pilot, not by hand. The cinematic trailer is not started.

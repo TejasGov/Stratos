@@ -37,13 +37,13 @@ export interface SamRules {
 export const SAM_RULES: Record<SamType, SamRules> = {
   shorad: {
     type: "shorad",
-    detectRange: 5500,
-    trackTime: 2,
+    detectRange: 4500,
+    trackTime: 3,
     trackDecay: 0.6,
     launchRange: 4200,
     minLaunchRange: 250,
     maxInFlight: 1,
-    reload: 6,
+    reload: 12,
     sensorHeight: 4,
     missile: MISSILES.shorad,
     radarVehicle: false,
@@ -51,12 +51,12 @@ export const SAM_RULES: Record<SamType, SamRules> = {
   mrsam: {
     type: "mrsam",
     detectRange: 12000,
-    trackTime: 3.2,
+    trackTime: 4.5,
     trackDecay: 0.35,
     launchRange: 9000,
     minLaunchRange: 900,
-    maxInFlight: 2,
-    reload: 5,
+    maxInFlight: 1,
+    reload: 12,
     sensorHeight: 12,
     missile: MISSILES.mrsam,
     radarVehicle: true,
@@ -79,13 +79,13 @@ export const RADAR = {
 };
 
 /** Weapons hold on ground-launched missiles beyond this many in flight at the player. */
-export const MAX_SAMS_IN_FLIGHT = 3;
+export const MAX_SAMS_IN_FLIGHT = 2;
 /**
- * Arcade rule: batteries search and track over Haven's island but hold fire
- * inside this radius of its runway, so takeoffs and home-field fights are
- * not under the forward sites' umbrella.
+ * Arcade rule: Haven's own air defence covers this radius around its runway.
+ * The enemy network cannot see or shoot into it, so takeoffs, climb-outs and
+ * landings are never under the forward sites' umbrella.
  */
-export const HOME_UMBRELLA = { x: HAVEN.runway.x, z: HAVEN.runway.z, radius: 3000 };
+export const HOME_UMBRELLA = { x: HAVEN.runway.x, z: HAVEN.runway.z, radius: 7000 };
 export function underHomeUmbrella(position: Vector3) {
   return (
     Math.hypot(position.x - HOME_UMBRELLA.x, position.z - HOME_UMBRELLA.z) <
@@ -344,13 +344,16 @@ export class AirDefense {
           u.detection = "blind";
           u.sees = u.painting = false;
         } else {
-          u.detection = samDetection(u.rules.type, u.sensor, target, ground);
+          u.detection = underHomeUmbrella(target.position)
+            ? "blind"
+            : samDetection(u.rules.type, u.sensor, target, ground);
           u.sees = u.detection === "detected";
           // The radar's own emission reaches the jet before its echo comes back strong enough.
           u.painting =
             !!u.radar &&
             (u.sees ||
               (u.detection !== "terrain" &&
+                u.detection !== "blind" &&
                 u.range < radarDetectionRange(1) * RADAR.rwrMargin &&
                 terrainClear(u.sensor, target.position, ground, 200)));
         }

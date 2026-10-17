@@ -44,3 +44,22 @@ Urgent calls (missile, crash) cut in over chatter; routine calls queue behind wh
 said, and each line has a cooldown so it never nags. Terrain warnings are the jet's own
 synthesized ground-proximity alarm rather than a voice call, as in a real cockpit. Subtitles
 follow the delivered takes, and the radio can be switched off in Settings.
+
+## Citadel (War level)
+
+The War sortie is commanded by **Citadel**, a British air officer voiced with **ElevenLabs v4**
+using the library voice **Severin – Powerful & Commanding** (refined British accent). Same
+mastering as Haven Control (trimmed, about −19 LUFS, −1 dB true peak, 80 kbps mono); the radio
+subtitle shows CITADEL as the speaker.
+
+| File | When | Performance prompt |
+| --- | --- | --- |
+| `war.mp3` | War sortie brief (at wheels-up) | [calm, authoritative] Kestrel, this is Citadel. Operation Iron Dawn is go. Viper Two and Viper Three will join your wing once you're airborne. [firmly] Clear the skies, slip in low through the valleys, and put your bombs on Blackridge. Good hunting. |
+| `war-wave.mp3` | First wave released | [urgent, controlled] Bandits, three of them, coming down from the north. Viper flight, you are weapons free. Engage. |
+| `war-ingress.mp3` | Phase 2: ingress | [approving] Sky's clear. Well flown. [serious] Now get down low, Kestrel, and thread the valley markers. Stay under their radar. |
+| `war-bombs.mp3` | Phase 3: bombing | [intense] Blackridge is dead ahead. You are cleared hot. Bombs on the radar first, then the fuel farm and the shelters. |
+| `war-bomb-hit.mp3` | Target destroyed | [pleased] Direct hit, Kestrel! Lovely bombing. |
+| `war-wingman-down.mp3` | Wingman lost | [grim] We've lost a Viper. [steady] Keep your head in the fight, Kestrel. We grieve later. |
+| `war-counter.mp3` | Phase 4: counterattack | [urgent] Counterattack. Four bandits from the north, and they want their base back. Viper flight, hold the line. |
+| `war-complete.mp3` | Operation complete | [proud, warm] Splendid work, Kestrel. Blackridge is burning and the sky is ours. Bring Viper flight home. |
+| `war-failed.mp3` | Operation failed | [stern] That's enough, Kestrel. The operation's a write-off. Disengage and come home. That's an order. |

@@ -130,13 +130,13 @@ test("short-range launchers see heat: proximity, afterburner reach, cold engines
     irDetectionRange({ engines: [{ output: 1, failed: false }, { output: 0, failed: true }] }) <
       irDetectionRange({ engines: [{ output: 1, failed: false }, { output: 1, failed: false }] }),
   );
-  const at = new Vector3(0, 1500, -7000);
+  const at = new Vector3(0, 1500, -6000);
   assert.equal(samDetection("shorad", sensor, jet(at, undefined, lit), flat), "detected");
   assert.equal(samDetection("shorad", sensor, jet(at, undefined, dry), flat), "range");
   at.z = -2000;
   assert.equal(samDetection("shorad", sensor, jet(at, undefined, dead), flat), "range");
   // Stealth shaping is no help against a heat sensor.
-  at.z = -4500;
+  at.z = -4000;
   assert.equal(
     samDetection("shorad", sensor, jet(at, undefined, { ...dry, rcs: 0.1 }), flat),
     "detected",
@@ -154,7 +154,7 @@ test("flare decoy chances: short-range seekers are easiest, battery missiles har
   for (const p of [MISSILES.shorad, MISSILES.aam, MISSILES.mrsam]) {
     assert.ok(chance(p, lit) < chance(p, dry), `${p.id} afterburner`);
     assert.ok(chance(p, idle) > chance(p, dry), `${p.id} idle`);
-    assert.ok(chance(p, idle) <= 0.95);
+    assert.ok(chance(p, idle) <= 0.97);
   }
   // Monte Carlo through the real seeker: one flare per missile, many independent sorties.
   const trial = (profile: MissileProfile, boost: boolean, seed: number) => {
@@ -287,18 +287,18 @@ function run(
 
 test("batteries search, build a track over seconds, then launch only once weapons are free", () => {
   // Hovering 3 km east of the spine battery at 2.5 km: in reach of nothing else that launches first.
-  const p = player(3000, 2500, -5000, true);
+  const p = player(3000, 2500, -6500, true);
   const system = new CombatSystem();
   system.start("strike", p);
   for (const e of system.enemies) if (e.kind === "air") e.active = false;
   const spine = system.airDefense.units.find((u) => u.site.id === "spine")!;
   assert.equal(spine.state, "search");
   let trackedAt = -1;
-  for (let i = 0; i < 6 * 60; i++) {
+  for (let i = 0; i < 7 * 60; i++) {
     system.step(1 / 60, p, combatNeutral, emptyWorld);
     if (trackedAt < 0 && spine.track >= 1) trackedAt = system.elapsed;
   }
-  assert.ok(trackedAt >= 2 && trackedAt <= 4, `track built in ${trackedAt}s`);
+  assert.ok(trackedAt >= 4 && trackedAt <= 6, `track built in ${trackedAt}s`);
   assert.equal(spine.state, "track");
   assert.ok(system.warning.count > 0 && system.warning.level === 2);
   // Clockwise bearing: the battery is due west of a north-facing jet.
@@ -321,7 +321,7 @@ test("batteries search, build a track over seconds, then launch only once weapon
 });
 
 test("destroying a battery's radar vehicle blinds it", () => {
-  const p = player(3000, 2500, -5000);
+  const p = player(3000, 2500, -6500);
   const system = new CombatSystem();
   system.start("strike", p);
   for (const e of system.enemies) if (e.kind === "air") e.active = false;
@@ -336,14 +336,14 @@ test("destroying a battery's radar vehicle blinds it", () => {
   assert.ok(!events.some((e) => e.type === "samLaunch" && system.missiles.find((m) => m.id === e.entityId)?.owner === spine.launcher.id));
 });
 
-test("batteries track but hold fire over Haven's island", () => {
+test("batteries neither track nor fire inside Haven's umbrella", () => {
   const p = player(HAVEN.runway.x, 1500, HAVEN.runway.z - 1500);
   assert.ok(Math.hypot(p.position.x - HOME_UMBRELLA.x, p.position.z - HOME_UMBRELLA.z) < HOME_UMBRELLA.radius);
   const system = new CombatSystem();
   system.start("intercept", p);
   for (const e of system.enemies) e.releaseAt = Infinity;
   const events = run(system, p, 20);
-  assert.ok(system.airDefense.units.some((u) => u.track >= 1));
+  assert.ok(system.airDefense.units.every((u) => u.track === 0 && !u.painting));
   assert.equal(events.filter((e) => e.type === "samLaunch").length, 0);
 });
 

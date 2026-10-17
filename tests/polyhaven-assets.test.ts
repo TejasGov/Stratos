@@ -3,16 +3,16 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 
-test("vendored Poly Haven terrain maps match their complete CC0 integrity roster", async () => {
+test("vendored Poly Haven terrain and building maps match their complete CC0 integrity roster", async () => {
   const directory = new URL("../public/assets/polyhaven/", import.meta.url);
   const manifest = JSON.parse(
     await readFile(new URL("manifest.json", directory), "utf8"),
   );
   assert.equal(manifest.license, "CC0-1.0");
-  assert.equal(manifest.files.length, 9);
+  assert.equal(manifest.files.length, 10);
   assert.equal(
     new Set(manifest.files.map((entry: { path: string }) => entry.path)).size,
-    9,
+    10,
   );
   let bytes = 0;
   for (const entry of manifest.files) {
@@ -32,5 +32,5 @@ test("vendored Poly Haven terrain maps match their complete CC0 integrity roster
     assert.equal(image[1], 0xd8);
     bytes += image.byteLength;
   }
-  assert.equal(bytes, 5304440);
+  assert.equal(bytes, 5304440 + 686726);
 });

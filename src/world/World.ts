@@ -67,6 +67,58 @@ function treeGeometry() {
  * The world: GPU heightfield terrain to the horizon, plus streamed scenery
  * chunks (trees, buildings) near the aircraft and authored landmarks.
  */
+/**
+ * Town buildings: Poly Haven "Painted Plaster Wall" (CC0) mapped triplanar in
+ * world space (4 m tiles), so boxes of any size get unstretched, consistent
+ * walls. The plaster is normalised to neutral detail and keeps the base colour.
+ */
+function plasteredMaterial(origin: T.Vector3) {
+  const material = new T.MeshStandardMaterial({ color: "#d8d2bd", roughness: 0.85 });
+  const plaster = new T.TextureLoader().load("/assets/polyhaven/painted_plaster_wall_diff_1k.jpg");
+  plaster.colorSpace = T.SRGBColorSpace;
+  plaster.wrapS = plaster.wrapT = T.RepeatWrapping;
+  plaster.anisotropy = 4;
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.tPlaster = { value: plaster };
+    // Rendered positions are origin-relative; add it back so the plaster never swims.
+    shader.uniforms.uOrigin = { value: origin };
+    shader.vertexShader = shader.vertexShader
+      .replace("#include <common>", `#include <common>
+uniform vec3 uOrigin;
+varying vec3 vPlasterPos;
+varying vec3 vPlasterNrm;`)
+      .replace(
+        "#include <begin_vertex>",
+        `#include <begin_vertex>
+        mat4 plasterModel = modelMatrix;
+        #ifdef USE_INSTANCING
+        plasterModel = modelMatrix * instanceMatrix;
+        #endif
+        vPlasterPos = (plasterModel * vec4(transformed, 1.0)).xyz + uOrigin;
+        vPlasterNrm = mat3(plasterModel) * objectNormal;`,
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace("#include <common>", `#include <common>
+uniform sampler2D tPlaster;
+varying vec3 vPlasterPos;
+varying vec3 vPlasterNrm;`)
+      .replace(
+        "#include <map_fragment>",
+        `#include <map_fragment>
+        {
+          vec3 w = abs(normalize(vPlasterNrm));
+          w /= w.x + w.y + w.z;
+          vec3 q = vPlasterPos / 4.0;
+          vec3 plaster = texture2D(tPlaster, q.zy).rgb * w.x + texture2D(tPlaster, q.xz).rgb * w.y + texture2D(tPlaster, q.xy).rgb * w.z;
+          // Neutral detail around 1 (divided by the photo's mean colour), contrast doubled.
+          diffuseColor.rgb *= clamp(1.0 + (plaster / vec3(0.406, 0.366, 0.351) - 1.0) * 2.0, 0.55, 1.4);
+        }`,
+      );
+  };
+  material.customProgramCacheKey = () => "town-plaster";
+  return material;
+}
+
 export class World {
   origin = new T.Vector3();
   chunks = new Map<string, T.Group>();
@@ -80,10 +132,7 @@ export class World {
     roughness: 0.92,
   });
   private buildingGeometry = new T.BoxGeometry(1, 1, 1);
-  private buildingMaterial = new T.MeshStandardMaterial({
-    color: "#d8d2bd",
-    roughness: 0.85,
-  });
+  private buildingMaterial = plasteredMaterial(this.origin);
   private bridge = new T.Group();
   /** The two air bases (Haven and Blackridge): parked jets, strike-target wrecks. */
   readonly airbase: Airbase;

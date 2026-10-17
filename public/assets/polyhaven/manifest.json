@@ -94,6 +94,16 @@
       "bytes": 184628,
       "providerMd5": "20fc1e4fec253dbefb013cfb08cf330d",
       "sha256": "9eab2c1f44b796c1a2681dc555c240b6c5666b331e4b9fd3d16d005f5d052972"
+    },
+    {
+      "asset": "painted_plaster_wall",
+      "map": "Diffuse",
+      "path": "painted_plaster_wall_diff_1k.jpg",
+      "source": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/painted_plaster_wall/painted_plaster_wall_diff_1k.jpg",
+      "assetPage": "https://polyhaven.com/a/painted_plaster_wall",
+      "bytes": 686726,
+      "providerMd5": "15ba8c1f63a5ab412b1eabe31728540a",
+      "sha256": "440310f05af089f2c93353167573403cbc3f805948203237b5d26431eeb9e19c"
     }
   ]
 }

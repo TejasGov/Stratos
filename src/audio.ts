@@ -13,9 +13,17 @@ const SAMPLE_FILES = {
   cannon: "/assets/audio/cannon.wav",
   missile: "/assets/audio/missile.mp3",
   explosion: "/assets/audio/explosion.mp3",
+  rush: "/assets/audio/rush.wav",
+  supersonic: "/assets/audio/supersonic.wav",
+  burnerLight: "/assets/audio/burner-light.mp3",
 } as const;
 type Sample = keyof typeof SAMPLE_FILES;
-type LoopName = "engine" | "afterburner" | "wind" | "rain";
+type LoopName = "engine" | "afterburner" | "wind" | "rain" | "rush" | "supersonic";
+const LOOPS = new Set<string>(["engine", "afterburner", "wind", "rain", "rush", "supersonic"]);
+const smooth = (x: number, a: number, b: number) => {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+};
 
 interface Loop {
   source: AudioBufferSourceNode;
@@ -39,6 +47,7 @@ export class FlightAudio {
   private loops: Partial<Record<LoopName, Loop>> = {};
   private gun?: { source: AudioBufferSourceNode; gain: GainNode };
   private lastGun = 0;
+  private wasBoosting = false;
   private radioInput?: AudioNode;
   /** Warning-receiver tracking tone: one oscillator kept alive, gated by gain. */
   private rwrTrack?: { oscillator: OscillatorNode; gain: GainNode };
@@ -733,8 +742,7 @@ export class FlightAudio {
         .then((data) => ctx.decodeAudioData(data))
         .then((buffer) => {
           this.samples.set(name, buffer);
-          if (name === "engine" || name === "afterburner" || name === "wind" || name === "rain")
-            this.startLoop(name, buffer);
+          if (LOOPS.has(name)) this.startLoop(name as LoopName, buffer);
         })
         .catch(() => {
           // Keep the synthesized layer for this sound.
@@ -831,7 +839,17 @@ export class FlightAudio {
     // Past Mach 1 the engine noise trails behind the aircraft: muffle it.
     const muffle = mach > 1 ? 1 : 0;
     const bed = 1 - 0.5 * this.duck;
-    const { engine, afterburner, wind: windLoop, rain: rainLoop } = this.loops;
+    const { engine, afterburner, wind: windLoop, rain: rainLoop, rush, supersonic } = this.loops;
+    // Cinematic speed layers: a building air rush, then the deep supersonic drone
+    // that takes over once the jet outruns its own engine noise.
+    const fast = smooth(speed, 170, 380);
+    const past = smooth(mach, 0.98, 1.35);
+    rush?.gain.gain.setTargetAtTime(on ? fast * (0.55 - 0.3 * past) * bed : 0, t, 0.35);
+    rush?.source.playbackRate.setTargetAtTime(0.85 + Math.min(speed, 700) / 1800, t, 0.4);
+    supersonic?.gain.gain.setTargetAtTime(on ? past * 0.6 * bed : 0, t, 0.6);
+    // Lighting the burner kicks with a cinematic whump.
+    if (on && boost && !this.wasBoosting) this.play("burnerLight", 0.75);
+    this.wasBoosting = boost;
     if (engine) {
       engine.gain.gain.setTargetAtTime(on ? (0.16 + throttle * 0.22) * bed : 0, t, 0.2);
       engine.source.playbackRate.setTargetAtTime(0.82 + throttle * 0.3 + Math.min(speed, 700) / 2800, t, 0.3);
@@ -849,7 +867,7 @@ export class FlightAudio {
       this.roarFilter.frequency.setTargetAtTime(muffle ? 160 : 520, t, 0.4);
     }
     if (windLoop) {
-      windLoop.gain.gain.setTargetAtTime(on ? Math.min(0.42, speed / 1300) * bed : 0, t, 0.2);
+      windLoop.gain.gain.setTargetAtTime(on ? Math.min(0.42, speed / 1300) * (1 - 0.6 * fast) * bed : 0, t, 0.2);
       windLoop.source.playbackRate.setTargetAtTime(0.75 + Math.min(speed, 700) / 1400, t, 0.3);
       this.wind.gain.setTargetAtTime(0, t, 0.1);
     } else this.wind.gain.setTargetAtTime(on ? Math.min(0.28, speed / 1200) : 0, t, 0.2);

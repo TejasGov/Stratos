@@ -1,11 +1,12 @@
 import type { Controls } from "../flight";
 
-export type CombatAction = "gun" | "missile" | "target" | "flare";
+export type CombatAction = "gun" | "missile" | "target" | "flare" | "bomb";
 export const defaultBindings: Record<CombatAction, string> = {
   gun: "KeyF",
   missile: "KeyX",
   target: "KeyT",
   flare: "KeyV",
+  bomb: "KeyN",
 };
 const deadzone = (n: number) =>
   Math.abs(n) < 0.12 ? 0 : (Math.sign(n) * (Math.abs(n) - 0.12)) / 0.88;
@@ -39,6 +40,7 @@ export class FlightInput {
       missile: 1,
       flare: 2,
       target: 3,
+      bomb: 11,
     };
     for (const action of Object.keys(this.bindings) as CombatAction[]) {
       if (keys.has(this.bindings[action]) || button(padButtons[action]) > 0.5)

@@ -87,6 +87,20 @@ const lowSpeed = (speed: number) => MathUtils.lerp(0.25, 1, MathUtils.smoothstep
  * Mach 1, so it ramps in steeply up to 300 m/s: a runway kick, then a
  * strong but believable shove instead of 12 g from a slow climb-out.
  */
+/** Afterburner ram-pressure gain with Mach (capped at the airframe's limit). */
+export const ramGain = (mach: number, maxMach: number) => 1 + RAM * Math.min(mach, maxMach) ** 2;
+/** Drag rise past the airframe's published top speed: inlets and structure are not built for more. */
+export const machLimit = (mach: number, maxMach: number) => {
+  const over = Math.max(0, mach - maxMach);
+  return 1 + 6 * over + 80 * over * over;
+};
+const RAM = 0.22;
+/**
+ * Thrust and drag share this scale. Top speeds depend only on their ratio;
+ * the scale sets how hard the jet accelerates and decelerates (about 1-3 g
+ * rather than the 6-12 g an unscaled arcade model gave).
+ */
+export const FORCE = 0.3;
 export const burnerShare = (speed: number) => MathUtils.lerp(0.06, 1, (Math.min(speed, 300) / 300) ** 3);
 interface CobraState {
   active: boolean;
@@ -122,7 +136,7 @@ export class Flight {
   /** Airframe multipliers: dry thrust, afterburner, drag and control authority. */
   performance = { thrust: 1, afterburner: 1, drag: 1, agility: 1 };
   /** Post-stall authority, thrust vectoring and size of the current airframe. */
-  traits = { supermanoeuvre: 0.45, thrustVectoring: false, length: 16 };
+  traits = { supermanoeuvre: 0.45, thrustVectoring: false, length: 16, maxMach: 2 };
   /** Per-engine state, one entry per engine of the current airframe. */
   engines: EngineState[] = [{ output: 0.63, failed: false }];
   /** Afterburner lit, per engine. */
@@ -184,12 +198,13 @@ export class Flight {
   private assistedRotation = new Quaternion();
   /** Applies an airframe's performance, engine count and post-stall traits. */
   configure(
-    a: Pick<Airframe, "performance" | "engines" | "supermanoeuvre" | "thrustVectoring" | "length">,
+    a: Pick<Airframe, "performance" | "engines" | "supermanoeuvre" | "thrustVectoring" | "length" | "maxMach">,
   ) {
     Object.assign(this.performance, a.performance);
     this.traits.supermanoeuvre = a.supermanoeuvre;
     this.traits.thrustVectoring = a.thrustVectoring;
     this.traits.length = a.length;
+    this.traits.maxMach = a.maxMach;
     if (this.engines.length !== a.engines) {
       this.engines = Array.from({ length: a.engines }, () => ({ output: 0, failed: false }));
       this.afterburners = this.engines.map(() => false);
@@ -413,13 +428,20 @@ export class Flight {
     const p = this.performance,
       f = lowSpeed(this.speed);
     let thrust = 0;
+    if (ground) {
+      // On the wheels: about 0.6 g at full military power, 0.35 g more in reheat;
+      // idle only balances rolling resistance.
+      for (let i = 0; i < this.engines.length; i++) {
+        const o = this.engines[i].output;
+        thrust += (Math.max(0, o - IDLE) / (1 - IDLE)) * 6 * p.thrust + (this.afterburners[i] ? 3.5 * p.afterburner : 0);
+      }
+      return (this.thrust = thrust / this.engines.length);
+    }
     for (let i = 0; i < this.engines.length; i++) {
       const o = this.engines[i].output;
-      // On the wheels idle thrust only balances rolling resistance.
-      const dry = ground ? (Math.max(0, o - IDLE) / (1 - IDLE)) * (9 + 33 * p.thrust) : this.dryThrust(o);
-      thrust += dry * f + (this.afterburners[i] ? 130 * p.afterburner * burnerShare(this.speed) : 0);
+      thrust += this.dryThrust(o) * f + (this.afterburners[i] ? 130 * p.afterburner * burnerShare(this.speed) * ramGain(this.mach, this.traits.maxMach) : 0);
     }
-    return (this.thrust = (thrust / this.engines.length) * this.density ** 0.7);
+    return (this.thrust = FORCE * (thrust / this.engines.length) * this.density ** 0.7);
   }
   step(dt: number, control: Controls) {
     if (this.crashed || !(dt > 0) || !Number.isFinite(dt)) return;
@@ -482,7 +504,7 @@ export class Flight {
     const vr = this.rotateSpeed;
     const p = this.performance;
     let v = this.speed;
-    const drag = 0.00125 * p.drag * lowSpeed(v) * v * v * (this.airbrake ? 1.8 : 1);
+    const drag = FORCE * 0.00125 * p.drag * lowSpeed(v) * v * v * (this.airbrake ? 1.8 : 1);
     const thrust = this.totalThrust(true);
     const resist = ROLLING + (this.airbrake ? BRAKES : 0) + drag;
     // Friction and brakes stop the jet but never push it backwards.
@@ -720,14 +742,15 @@ export class Flight {
     this.pitch = this.angles.x;
     this.yaw = this.angles.y;
     this.roll = this.angles.z;
-    // Thrust lapses with altitude more slowly than density falls, so the jet
-    // goes faster up high: Mach ~0.95 level at sea level (dive to go supersonic), ~1.15 at 6 km, ~1.8 at 20 km.
+    // Thrust lapses with altitude more slowly than density falls and the
+    // afterburner gains ram pressure with Mach, so jets reach their published
+    // top speed around 11-15 km and stay near Mach 1.2 down low.
     const thrust = this.totalThrust(false);
     const perf = this.performance;
     // Transonic wave-drag rise, peaking just past Mach 1.
     const wave = 1 + 0.35 * Math.exp(-(((this.mach - 1.02) / 0.15) ** 2));
     const drag =
-      0.00125 * perf.drag * this.density * this.speed ** 2 * wave * (this.airbrake ? 1.9 : 1);
+      FORCE * 0.00125 * perf.drag * this.density * this.speed ** 2 * wave * machLimit(this.mach, this.traits.maxMach) * (this.airbrake ? 1.9 : 1);
     // Induced and form drag climb steeply once the wing is pulled hard or stalled.
     const stalled = Math.sin(Math.max(0, this.aoa - 8 * DEG)) ** 2;
     const form = 0.0042 * this.density * this.speed ** 2 * stalled;

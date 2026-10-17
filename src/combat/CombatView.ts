@@ -1,5 +1,6 @@
 import * as T from "three";
-import { CombatSystem, type CombatEntity } from "./CombatSystem";
+import { CombatSystem, WAR_WAYPOINTS, type CombatEntity } from "./CombatSystem";
+import { BLACKRIDGE } from "../world/bases";
 import {
   createDefenseTemplates,
   loadDefenseTemplates,
@@ -35,6 +36,9 @@ export class CombatView {
   private forward = new T.Vector3(0, 0, -1);
   private white = new T.Color(0.35, 0.95, 1);
   private orange = new T.Color(1, 0.32, 0.07);
+  private bombColor = new T.Color(0.45, 0.5, 0.46);
+  private direction = new T.Vector3();
+  private marker: T.Mesh;
   private bodyGeometry: T.BufferGeometry;
   private wingGeometry: T.BufferGeometry;
   private bodyMaterial: T.MeshStandardMaterial;
@@ -136,6 +140,13 @@ export class CombatView {
     this.missileMesh.instanceMatrix.setUsage(T.DynamicDrawUsage);
     this.missileMesh.frustumCulled = false;
     this.group.add(this.missileMesh);
+    // War ingress marker: a big lit ring standing over the valley.
+    this.marker = new T.Mesh(
+      ownGeometry(new T.TorusGeometry(90, 5, 8, 64)),
+      ownMaterial(new T.MeshBasicMaterial({ color: 0xd8f37a })),
+    );
+    this.marker.visible = false;
+    this.group.add(this.marker);
     this.tracerGeometry.setAttribute(
       "position",
       new T.BufferAttribute(this.tracerPositions, 3).setUsage(
@@ -231,7 +242,7 @@ export class CombatView {
           new T.Mesh(this.wingGeometry, material),
         );
       }
-      if (entity.kind === "ally") root.scale.setScalar(1.35);
+      if (entity.role === "transport") root.scale.setScalar(1.35);
       const beacon = new T.Mesh(
         this.beaconGeometry,
         entity.kind === "ally" ? this.allyBeaconMaterial : this.beaconMaterial,
@@ -252,6 +263,15 @@ export class CombatView {
     for (const root of this.entities.values()) root.visible = false;
     for (const entity of system.enemies) this.place(system, entity, origin);
     if (system.ally) this.place(system, system.ally, origin);
+    for (const w of system.wingmen) this.place(system, w, origin);
+    const marker = system.warMarker;
+    this.marker.visible = !!marker;
+    if (marker) {
+      this.marker.position.copy(marker).sub(origin);
+      // Face the ring along the leg toward the next marker (or Blackridge).
+      const next = WAR_WAYPOINTS[system.waypoint + 1] ?? { x: BLACKRIDGE.runway.x, z: BLACKRIDGE.runway.z };
+      this.marker.lookAt(next.x - origin.x, this.marker.position.y, next.z - origin.z);
+    }
     let missiles = 0;
     for (const missile of system.missiles) {
       if (!missile.active || missiles >= MAX_MISSILES) continue;
@@ -267,6 +287,16 @@ export class CombatView {
         missiles,
         missile.hostile ? this.orange : this.white,
       );
+      missiles++;
+    }
+    for (const bomb of system.bombs) {
+      if (!bomb.active || missiles >= MAX_MISSILES) continue;
+      this.local.copy(bomb.position).sub(origin);
+      this.direction.copy(bomb.velocity).normalize();
+      this.quaternion.setFromUnitVectors(this.forward, this.direction);
+      this.matrix.compose(this.local, this.quaternion, this.scale.setScalar(2.6));
+      this.missileMesh.setMatrixAt(missiles, this.matrix);
+      this.missileMesh.setColorAt(missiles, this.bombColor);
       missiles++;
     }
     this.missileMesh.count = missiles;
