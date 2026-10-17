@@ -76,9 +76,9 @@ export const SAM_SITES: SamSite[] = [
   { id: "br-west", type: "shorad", x: -700, z: -8150 },
   { id: "br-east", type: "shorad", x: 700, z: -8550 },
   { id: "br-ridge", type: "mrsam", x: 0, z: -7900 },
-  { id: "strait", type: "shorad", x: -1300, z: -3500 },
-  { id: "spine", type: "mrsam", x: 0, z: -5000 },
-  { id: "west-valley", type: "shorad", x: -1500, z: -6000 },
+  { id: "strait", type: "shorad", x: -1500, z: -5500 },
+  { id: "spine", type: "mrsam", x: 0, z: -6500 },
+  { id: "west-valley", type: "shorad", x: -1500, z: -6500 },
 ];
 
 /** Start of the takeoff roll: the threshold end of a runway, pointing down it. */

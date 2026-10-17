@@ -1128,3 +1128,45 @@ body[data-photo] .comms {
     transform: scaleY(0.7);
   }
 }
+
+/* Contextual control prompt: which key to press right now. */
+.coach {
+  position: absolute;
+  left: 50%;
+  bottom: 16%;
+  transform: translate(-50%, 6px);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: calc(100vw - 32px);
+  padding: 10px 18px;
+  border: 1px solid #ffffff26;
+  border-radius: 6px;
+  background: #050c12cc;
+  color: #eef8e7;
+  font-size: 13px;
+  letter-spacing: 1.2px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s, transform 0.25s;
+  z-index: 6;
+}
+.coach.on {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+.coach kbd {
+  flex: none;
+  font-size: 12px;
+  color: #d8f37a;
+  border-color: #d8f37a66;
+}
+body:not([data-state="flight"]) .coach,
+body[data-photo] .coach {
+  display: none;
+}
+/* The opening shot plays without the HUD. */
+body[data-intro] #hud > :not(#coach),
+body[data-intro] #hud-canvas {
+  opacity: 0;
+}

@@ -71,11 +71,25 @@ const RADIO_MILESTONES = [
 ] as const;
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 createUI();
-/** Sortie opening shot: high over Haven's apron, down past the ground crew to the jet. */
-const INTRO_SECONDS = 5;
-const INTRO_FROM = toWorld(HAVEN, 300, 60);
-const INTRO_TO = toWorld(HAVEN, 52, -684);
-const INTRO_APRON = toWorld(HAVEN, 160, -80);
+/** A point at Haven in runway-frame (lat, s), `h` metres above the field. */
+const havenPoint = (lat: number, s: number, h: number) => {
+  const p = toWorld(HAVEN, lat, s);
+  return new T.Vector3(p.x, HAVEN.runway.elevation + h, p.z);
+};
+/**
+ * Sortie opening: close shots of Haven's people, cut together, ending behind
+ * the saluting ground crew as the camera finds the jet (look: null) on the runway.
+ */
+const INTRO_SHOTS = [
+  // Low dolly past the PT drill in front of the barracks, joggers beyond.
+  { seconds: 3.2, from: havenPoint(-156, -134, 1.6), to: havenPoint(-155, -160, 2.1), look: havenPoint(-167, -147, 1) },
+  // Across the apron: a crew talking between the parked jets.
+  { seconds: 3, from: havenPoint(178, -110, 1.8), to: havenPoint(181, -82, 2.4), look: havenPoint(190, -95, 1.3) },
+  // Behind the ground crew at the threshold, panning to the jet.
+  { seconds: 3, from: havenPoint(64, -664, 1.9), to: havenPoint(52, -684, 2.3), look: null },
+];
+const INTRO_SECONDS = INTRO_SHOTS.reduce((t, shot) => t + shot.seconds, 0);
+const INTRO_CREW = havenPoint(42, -706, 1.6);
 
 class Game {
   renderer: T.WebGLRenderer;
@@ -735,6 +749,7 @@ class Game {
     this.groundCamera = 1;
     this.pathCamera = 0;
     this.intro = INTRO_SECONDS;
+    this.liftedOffAt = -1;
     if (combatMission) this.combat.start(combatMission, this.flight);
     this.cameraReady = false;
     this.setState("flight");
@@ -875,6 +890,9 @@ class Game {
   private groundCamera = 0;
   private pathCamera = 0;
   private intro = 0;
+  /** Game time of this sortie's liftoff (-1 before it). */
+  private liftedOffAt = -1;
+  private coachShown = "";
   private pathEuler = new T.Euler();
   private cameraRotation = new T.Quaternion();
   private showcaseEuler = new T.Euler();
@@ -1021,6 +1039,38 @@ class Game {
       { passive: false },
     );
   }
+  /** Which key to press right now, for players who have not read the controls. */
+  private coach(): [string, string] {
+    const f = this.flight;
+    if (this.state !== "flight") return ["", ""];
+    if (this.intro > 0) return ["ENTER", "skip the opening shot"];
+    if (this.combat.active && (this.combat.status.threat || this.combat.warning.samLaunch))
+      return [this.inputActions.bindings.flare.slice(3), "release flares, then turn hard"];
+    if (this.radio.spiked) return ["GO LOW", "stay under 100 m in the valleys to break the radar lock"];
+    if (f.onGround) {
+      if (this.liftedOffAt < 0) {
+        if (f.speed >= f.rotateSpeed) return ["W", "pull back to take off"];
+        if (f.speed > 3) return ["SPACE", "afterburner for a shorter roll · keep holding SHIFT"];
+        return ["HOLD SHIFT", "throttle up to start the takeoff roll"];
+      }
+      return f.speed > 1 ? ["HOLD Z", "wheel brakes"] : ["", ""];
+    }
+    if (this.time - this.liftedOffAt < 8) return ["W S · A D", "climb, dive and turn"];
+    const home = Math.hypot(f.position.x - HAVEN.runway.x, f.position.z - HAVEN.runway.z);
+    const agl = f.position.y - Math.max(0, heightAt(f.position.x, f.position.z));
+    if (this.time - this.liftedOffAt > 20 && home < 3500 && agl < 250 && f.speed < 150)
+      return ["IDLE", "nose a couple of degrees down; touch down gently, wings level"];
+    return ["", ""];
+  }
+  private updateCoach() {
+    const [key, text] = this.coach();
+    const shown = key + text;
+    if (shown === this.coachShown) return;
+    this.coachShown = shown;
+    el("coach-key").textContent = key;
+    el("coach-text").textContent = text;
+    el("coach").classList.toggle("on", !!text);
+  }
   /** Browsers only start audio from a gesture, so the theme starts on the first click or key. */
   private playTheme() {
     if (this.audio.enabled && this.theme.paused) this.theme.play().catch(() => {});
@@ -1037,6 +1087,8 @@ class Game {
   private menu() {
     this.save();
     this.playTheme();
+    this.intro = 0;
+    document.body.removeAttribute("data-intro");
     this.comms.clear();
     this.mission.stop();
     this.combat.stop();
@@ -1051,6 +1103,8 @@ class Game {
     this.syncConditions();
   }
   private input() {
+    // The jet waits on the runway while the opening shot plays.
+    if (this.intro > 0) return { ...neutral };
     const controls = this.inputActions.sample(
       this.keys,
       this.settings.invert,
@@ -1155,6 +1209,7 @@ class Game {
         if (this.liftoffCall && !this.flight.onGround) {
           this.comms.say(this.liftoffCall, 1.5);
           this.liftoffCall = null;
+          this.liftedOffAt = this.time;
         }
         // Wheels on (or just above) a runway: Flight judges contact with the pavement.
         if (
@@ -1517,26 +1572,28 @@ class Game {
         3,
         dt,
       );
-      // Any key, or the jet rolling, hands the shot straight back to the chase camera.
-      if (this.intro > 0 && (this.keys.size > 0 || f.speed > 3)) this.intro = 0;
+      if (this.intro > 0 && this.keys.has("Enter")) this.intro = 0;
       if (this.intro > 0) {
         this.intro -= dt;
-        const u = T.MathUtils.smootherstep(1 - this.intro / INTRO_SECONDS, 0, 1);
-        const o = this.world.origin,
-          E = HAVEN.runway.elevation;
-        this.camera.position.set(
-          T.MathUtils.lerp(INTRO_FROM.x, INTRO_TO.x, u) - o.x,
-          T.MathUtils.lerp(E + 28, E + 2.4, u) - o.y,
-          T.MathUtils.lerp(INTRO_FROM.z, INTRO_TO.z, u) - o.z,
-        );
-        // Hold on the apron's crews and parked jets, then pan to the jet on the runway.
-        this.look
-          .set(INTRO_APRON.x - o.x, E + 4 - o.y, INTRO_APRON.z - o.z)
-          .lerp(this.local, T.MathUtils.smoothstep(u, 0.35, 0.85));
+        let t = INTRO_SECONDS - this.intro,
+          shot = INTRO_SHOTS[0];
+        for (shot of INTRO_SHOTS) {
+          if (t < shot.seconds) break;
+          t -= shot.seconds;
+        }
+        const u = T.MathUtils.smootherstep(Math.min(t / shot.seconds, 1), 0, 1);
+        this.camera.position.lerpVectors(shot.from, shot.to, u).sub(this.world.origin);
+        if (shot.look) this.look.copy(shot.look).sub(this.world.origin);
+        else
+          this.look
+            .copy(INTRO_CREW)
+            .sub(this.world.origin)
+            .lerp(this.local, T.MathUtils.smoothstep(u, 0.15, 0.85));
         this.camera.up.set(0, 1, 0);
         this.camera.lookAt(this.look);
-        this.camera.fov = 50;
+        this.camera.fov = 45;
       }
+      document.body.toggleAttribute("data-intro", this.intro > 0);
     }
     if (
       this.settings.shake &&
@@ -1681,6 +1738,7 @@ class Game {
         : "";
     this.updateCombatHUD();
     el("warning").textContent = this.warningText;
+    this.updateCoach();
     this.updateObjective();
     el("coordinates").textContent =
       `${(this.flight.position.z / -1000).toFixed(1)} N / ${(this.flight.position.x / 1000).toFixed(1)} E`;
@@ -1857,13 +1915,13 @@ class Game {
     if (spiked && !this.radio.spiked && this.state === "flight") this.comms.say("radarLock");
     this.radio.spiked = spiked;
     if (status.threat && this.state === "flight") {
-      this.warningText = "INCOMING MISSILE · EVADE / COUNTERMEASURE";
+      this.warningText = `INCOMING MISSILE · ${this.inputActions.bindings.flare.slice(3)} FLARES`;
       if (this.time - this.lastThreatCue > 0.75) {
         this.audio.cue("warning");
         this.lastThreatCue = this.time;
       }
     } else if (status.samLaunch && this.state === "flight")
-      this.warningText = "SAM LAUNCH · BREAK / FLARES";
+      this.warningText = `SAM LAUNCH · ${this.inputActions.bindings.flare.slice(3)} FLARES · BREAK`;
     this.updateRwrAudio();
     if (status.canFire && !this.lastLock && this.state === "flight")
       this.audio.cue("lock");
