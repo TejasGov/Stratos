@@ -76,6 +76,8 @@ function begin(g: Game, hours: number, weather = "fair", mission?: string) {
   if (g.sky.weather !== weather) g.sky.setWeather(weather);
   keys(g);
 }
+// Low on the west bank: the jet passes broadside against the clouds just after Mach 1.
+const MACH1_CAMERA = v(1250, 25, -3200);
 const airframes = new Map<string, T.Object3D>();
 async function useAirframe(g: Game, id: string) {
   const a = FLEET.find((x) => x.id === id)!;
@@ -143,16 +145,16 @@ export const SHOTS: Shot[] = [
     },
     camera: rig(34, 7, 9, 160),
   },
-  {
-    name: "06-clouds",
-    seconds: 3,
+  ...(["clear", "fair", "towering"] as const).map((weather): Shot => ({
+    name: `06-weather-${weather}`,
+    seconds: 1.5,
     preroll: 60,
     setup(g) {
-      begin(g, 15.5, "towering");
+      begin(g, 15.5, weather);
       fly(g, -900, 2300, -2500, 0.4, 240);
     },
     camera: rig(42, 9, -14, 200, 10),
-  },
+  })),
   {
     name: "07-storm",
     seconds: 3,
@@ -199,21 +201,27 @@ export const SHOTS: Shot[] = [
   },
   {
     name: "09-supersonic",
-    seconds: 4,
     preroll: 60,
+    seconds: 6,
     setup(g) {
       begin(g, 17.6);
-      fly(g, 1450, 90, -2400, 0, 333);
+      fly(g, 1450, 60, -2400, 0, 318);
       keys(g, "ShiftLeft", "Space");
+      (window as any).boomAt = undefined;
     },
-    camera: (g, t) => {
-      const c = rig(-30 + t * 18, 4, 38, 0)(g);
-      return { ...c, fov: 52 };
+    update(g, t) {
+      if (g.flight.mach >= 1) (window as any).boomAt ??= t;
+    },
+    camera: (g) => {
+      const p = MACH1_CAMERA;
+      // Constant-size telephoto: about 40 m of frame height wherever the jet is.
+      const fov = T.MathUtils.clamp(2 * Math.atan(20 / p.distanceTo(g.flight.position)) * T.MathUtils.RAD2DEG, 6, 60);
+      return { p, look: g.flight.position.clone(), fov };
     },
   },
   ...FLEET.map((a, i): Shot => ({
     name: `10-fleet-${i + 1}`,
-    seconds: 1,
+    seconds: 5,
     preroll: i ? 8 : 60,
     async setup(g) {
       await useAirframe(g, a.id);
@@ -254,7 +262,7 @@ export const SHOTS: Shot[] = [
   },
   {
     name: "12-wingmen",
-    seconds: 4,
+    seconds: 5,
     preroll: 150,
     liveRoll: true,
     async setup(g) {
@@ -309,7 +317,7 @@ export const SHOTS: Shot[] = [
   },
   {
     name: "15-space",
-    seconds: 4,
+    seconds: 5,
     preroll: 80,
     setup(g) {
       begin(g, 12.5);
