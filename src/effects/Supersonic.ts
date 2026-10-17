@@ -282,8 +282,17 @@ export class Supersonic {
   private coreMaterial: T.ShaderMaterial;
   private plumeGeometry: T.CylinderGeometry;
   private coreGeometry: T.CylinderGeometry;
-  /** One outer plume and hot core per engine nozzle. */
-  private engines: { plume: T.Mesh; core: T.Mesh; nozzle: T.Vector3 }[] = [];
+  /**
+   * One outer plume and hot core per nozzle, each with its own material so
+   * every engine burns (or not) on its own. `engines` lists the engines that
+   * exhaust through the nozzle: a twin modelled with one centre nozzle shares it.
+   */
+  private engines: {
+    plume: T.Mesh<T.CylinderGeometry, T.ShaderMaterial>;
+    core: T.Mesh<T.CylinderGeometry, T.ShaderMaterial>;
+    nozzle: T.Vector3;
+    engines: number[];
+  }[] = [];
   private contrailMaterial: T.ShaderMaterial;
   private contrails: Ribbon[] = [];
   private tips: Ribbon[];
@@ -437,20 +446,33 @@ export class Supersonic {
    * Places afterburner plumes and contrails at each nozzle exit and the
    * vortex trails at the wingtips (aircraft frame, metres, +Z aft).
    */
-  setAirframe(nozzles: T.Vector3[], nozzleRadius: number, tip: T.Vector3, length: number) {
+  setAirframe(
+    nozzles: T.Vector3[],
+    nozzleRadius: number,
+    tip: T.Vector3,
+    length: number,
+    engineCount = nozzles.length,
+  ) {
     for (const e of this.engines) {
       e.plume.removeFromParent();
       e.core.removeFromParent();
+      e.plume.material.dispose();
+      e.core.material.dispose();
     }
-    this.engines = nozzles.map((nozzle) => {
-      const plume = new T.Mesh(this.plumeGeometry, this.plumeMaterial);
-      const core = new T.Mesh(this.coreGeometry, this.coreMaterial);
+    // Nozzles are listed in engine order; fewer nozzles than engines share them.
+    this.engines = nozzles.map((nozzle, i) => {
+      const plume = new T.Mesh(this.plumeGeometry, this.plumeMaterial.clone());
+      const core = new T.Mesh(this.coreGeometry, this.coreMaterial.clone());
       for (const m of [plume, core]) {
         m.layers.set(TRANSPARENT_LAYER);
         m.frustumCulled = false;
         this.plane.add(m);
       }
-      return { plume, core, nozzle: nozzle.clone() };
+      const engines: number[] = [];
+      for (let e = 0; e < engineCount; e++)
+        if (Math.min(nozzles.length - 1, Math.floor((e * nozzles.length) / engineCount)) === i) engines.push(e);
+      if (!engines.length) engines.push(Math.min(i, engineCount - 1));
+      return { plume, core, nozzle: nozzle.clone(), engines };
     });
     for (const r of this.contrails) {
       this.group.remove(r.mesh);
@@ -483,6 +505,9 @@ export class Supersonic {
       throttle: number;
       altitude: number;
       active: boolean;
+      /** Per-engine spool and failure, and which afterburners are lit (default: all as `throttle`/`boost`). */
+      engines?: readonly { output: number; failed: boolean }[];
+      afterburners?: readonly boolean[];
     },
     origin: T.Vector3,
   ) {
@@ -519,30 +544,39 @@ export class Supersonic {
     const breathe = (1 + 0.04 * Math.sin(this.time * 23) + this.onset * 0.15) * size;
     this.cone.scale.set(breathe, breathe, size);
 
-    const boost = state.active && state.boost ? 1 : 0;
-    const length = boost ? 9 + Math.sin(this.time * 31) * 0.4 : 2.6 + state.throttle * 1.8;
     // Plume length scales with the nozzle: diamonds stay a fixed number of diameters apart.
     const width = this.nozzleRadius / 0.6;
-    for (const [material, scale] of [
-      [this.plumeMaterial, 1],
-      [this.coreMaterial, 0.62],
-    ] as const) {
-      const u = material.uniforms;
-      u.uBoost.value = T.MathUtils.damp(u.uBoost.value, boost, 8, dt);
-      u.uThrottle.value = state.throttle;
-      u.uTime.value = this.time;
-      u.uLength.value = length * scale;
-      u.uMach.value = 1.15 + 0.35 * u.uBoost.value;
-    }
     for (const e of this.engines) {
+      // Each nozzle burns with the engines behind it; a dead engine shows no flame.
+      let output = 0,
+        lit = 0,
+        alive = 0;
+      for (const i of e.engines) {
+        const engine = state.engines?.[i];
+        if (engine?.failed) continue;
+        alive++;
+        output += engine ? engine.output : state.throttle;
+        if (state.afterburners ? state.afterburners[i] : state.boost) lit++;
+      }
+      output /= Math.max(1, e.engines.length);
+      const boost = state.active && alive && lit === alive ? 1 : 0;
+      const burning = state.active && alive > 0 && output > 0.02;
+      const length = boost ? 9 + Math.sin(this.time * 31) * 0.4 : 2.6 + output * 1.8;
       for (const [mesh, scale] of [
         [e.plume, 1],
         [e.core, 0.62],
       ] as const) {
+        const u = mesh.material.uniforms;
+        u.uBoost.value = T.MathUtils.damp(u.uBoost.value, boost, 8, dt);
+        // A spooled-down engine's flame fades out rather than snapping off.
+        u.uThrottle.value = Math.min(output, 1) * T.MathUtils.smoothstep(output, 0.02, 0.08);
+        u.uTime.value = this.time;
+        u.uLength.value = length * scale;
+        u.uMach.value = 1.15 + 0.35 * u.uBoost.value;
         const l = length * scale * width;
         mesh.scale.set(width, width, l);
         mesh.position.set(e.nozzle.x, e.nozzle.y, e.nozzle.z + l / 2);
-        mesh.visible = state.active;
+        mesh.visible = burning;
       }
     }
 
@@ -580,6 +614,11 @@ export class Supersonic {
       }
     }
   }
+  /** World position of the nozzle an engine exhausts through (aircraft at `position`/`quaternion`). */
+  enginePosition(engine: number, position: T.Vector3, quaternion: T.Quaternion, out: T.Vector3) {
+    const e = this.engines.find((n) => n.engines.includes(engine)) ?? this.engines[0];
+    return out.copy(e.nozzle).applyQuaternion(quaternion).add(position);
+  }
   private spawnBoom(position: T.Vector3, quaternion: T.Quaternion) {
     const mesh = new T.Mesh(this.boomGeometry, this.boomMaterial.clone());
     (mesh.material as T.ShaderMaterial).uniforms = {
@@ -613,6 +652,8 @@ export class Supersonic {
     for (const e of this.engines) {
       e.plume.removeFromParent();
       e.core.removeFromParent();
+      e.plume.material.dispose();
+      e.core.material.dispose();
     }
     for (const m of [this.plumeGeometry, this.coreGeometry, this.plumeMaterial, this.coreMaterial])
       m.dispose();

@@ -9,6 +9,19 @@ export interface HudTarget {
   health: number;
 }
 
+/** Engines, brakes and angle of attack for the systems readout. */
+export interface HudSystems {
+  engines: readonly { output: number; failed: boolean }[];
+  /** "ENG OFF", "SPOOLING" or "". */
+  status: string;
+  airbrake: boolean;
+  onGround: boolean;
+  aoa: number;
+  postStall: boolean;
+  /** Short pilot hint, shown under the mode line while set. */
+  hint: string;
+}
+
 export interface HudFrame {
   camera: T.PerspectiveCamera;
   plane: T.Vector3;
@@ -21,6 +34,7 @@ export interface HudFrame {
   agl: number;
   throttle: number;
   boost: boolean;
+  systems?: HudSystems;
   time: number;
   mode: string;
   warning: string;
@@ -244,9 +258,11 @@ export class Hud {
 
     // Mode line and warnings.
     this.text(frame.mode, bore.x, bore.y + radius + 36 * s, 16, GREEN);
+    if (frame.systems?.hint) this.text(frame.systems.hint, bore.x, bore.y + radius + 62 * s, 15, AMBER);
     if (frame.warning) {
       const blink = Math.sin(frame.time * 10) > -0.2;
-      if (blink) this.text(frame.warning, this.w / 2, this.h * 0.23, 24, frame.threat ? RED : AMBER);
+      const red = frame.threat || frame.warning.startsWith("ENGINE");
+      if (blink) this.text(frame.warning, this.w / 2, this.h * 0.23, 24, red ? RED : AMBER);
     }
     ctx.restore();
   }
@@ -316,9 +332,46 @@ export class Hud {
     this.text(`M ${frame.mach.toFixed(2)}`, ax - 54 * s, y + 46 * s, 17);
     this.text(`G ${frame.g.toFixed(1)}`, ax - 54 * s, y + 70 * s, 17, frame.g > 7 ? AMBER : GREEN);
     this.text(`${Math.round(frame.throttle * 100)}%${frame.boost ? " AB" : ""}`, ax - 54 * s, y + 94 * s, 15, frame.boost ? AMBER : GREEN);
+    if (frame.systems) this.drawSystems(frame.systems, ax - 54 * s, y + 120 * s);
     this.text("KT", ax - 54 * s, y - 42 * s, 13);
     this.text("M ASL", bx + 54 * s, y - 42 * s, 13);
     if (frame.agl < 1500) this.text(`R ${Math.max(0, Math.round(frame.agl))}`, bx + 54 * s, y + 46 * s, 17, frame.agl < 120 ? AMBER : GREEN);
+  }
+  /** Engine spool bars (red when failed), engine/brake state and post-stall AoA under the throttle. */
+  private drawSystems(sys: HudSystems, x: number, y: number) {
+    const s = this.s;
+    const n = sys.engines.length;
+    const w = 26 * s,
+      h = 9 * s,
+      gap = 8 * s;
+    const ctx = this.ctx;
+    for (let i = 0; i < n; i++) {
+      const e = sys.engines[i];
+      const x0 = x - (n * w + (n - 1) * gap) / 2 + i * (w + gap);
+      const color = e.failed ? RED : sys.status ? AMBER : GREEN;
+      this.line([x0, y - h / 2, x0 + w, y - h / 2, x0 + w, y + h / 2, x0, y + h / 2, x0, y - h / 2], color, 1.4);
+      ctx.fillStyle = color;
+      if (e.failed) {
+        this.line([x0, y - h / 2, x0 + w, y + h / 2], RED, 1.4);
+        this.line([x0, y + h / 2, x0 + w, y - h / 2], RED, 1.4);
+      } else ctx.fillRect(x0 + 2 * s, y - h / 2 + 2 * s, Math.max(0, (w - 4 * s) * Math.min(1, e.output)), h - 4 * s);
+    }
+    const label = n === 2 ? ["L", "R"] : ["ENG"];
+    for (let i = 0; i < n; i++) {
+      const x0 = x - (n * w + (n - 1) * gap) / 2 + i * (w + gap);
+      this.text(sys.engines[i].failed ? "FIRE" : label[i], x0 + w / 2, y + 16 * s, 11, sys.engines[i].failed ? RED : GREEN);
+    }
+    let line = y + 38 * s;
+    if (sys.status) {
+      this.text(sys.status, x, line, 14, AMBER);
+      line += 22 * s;
+    }
+    if (sys.airbrake) {
+      this.text(sys.onGround ? "BRAKES" : "SPD BRK", x, line, 14, AMBER);
+      line += 22 * s;
+    }
+    const aoa = (sys.aoa * 180) / Math.PI;
+    if (aoa > 12 && !sys.onGround) this.text(`α ${Math.round(aoa)}°`, x, line, 17, sys.postStall ? AMBER : GREEN);
   }
   private drawCombat(frame: HudFrame, bore: T.Vector2, radius: number) {
     const s = this.s;

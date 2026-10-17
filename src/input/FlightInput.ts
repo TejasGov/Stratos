@@ -16,6 +16,10 @@ export class FlightInput {
   private previous = new Set<CombatAction>();
   private down = new Set<CombatAction>();
   private pressed = new Set<CombatAction>();
+  /** Last sample's state of the edge-triggered flight switches. */
+  private latched = { cobra: false, engines: false };
+  /** Taps that came and went between two samples (slow frames). */
+  private tapped = { cobra: false, engines: false };
   connected = false;
   sample(
     keys: ReadonlySet<string>,
@@ -43,6 +47,14 @@ export class FlightInput {
         this.pressed.add(action);
     }
     this.previous = new Set(this.down);
+    // Cobra (M / left-stick click) and engine master (I) fire once per press.
+    const cobraDown = !!key("KeyM") || button(10) > 0.5;
+    const enginesDown = !!key("KeyI");
+    const cobra = (cobraDown && !this.latched.cobra) || this.tapped.cobra;
+    const engineToggle = (enginesDown && !this.latched.engines) || this.tapped.engines;
+    this.tapped.cobra = this.tapped.engines = false;
+    this.latched.cobra = cobraDown;
+    this.latched.engines = enginesDown;
     return {
       pitch: Math.max(
         -1.6,
@@ -68,7 +80,14 @@ export class FlightInput {
         button(7) -
         button(6),
       boost: !!key("Space") || button(4) > 0.5,
+      airbrake: !!key("KeyZ") || button(5) > 0.5,
+      cobra,
+      engineToggle,
     };
+  }
+  /** Buffers a cobra or engine-switch key press so a tap between samples still counts. */
+  tap(control: "cobra" | "engines") {
+    this.tapped[control] = true;
   }
   held(action: CombatAction) {
     return this.down.has(action);
@@ -89,5 +108,7 @@ export class FlightInput {
     this.down.clear();
     this.pressed.clear();
     this.previous.clear();
+    this.latched.cobra = this.latched.engines = false;
+    this.tapped.cobra = this.tapped.engines = false;
   }
 }

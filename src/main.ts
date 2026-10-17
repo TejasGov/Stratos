@@ -5,10 +5,12 @@ import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
 import { animate, createTimeline, engine } from "animejs";
 import { World } from "./world/World";
 import { heightAt, renderedHeightAt, SEED } from "./world/terrain";
-import { Flight, neutral } from "./flight";
+import { Flight, neutral, overRunway, runwayAt } from "./flight";
+import { HAVEN } from "./world/bases";
+import { toWorld } from "./world/baseLayout";
 import { Mission, landmarks, routes, type RouteId } from "./missions";
 import { FlightAudio } from "./audio";
-import { Comms } from "./comms";
+import { Comms, type Line } from "./comms";
 import { createUI, el } from "./ui";
 import { Hud } from "./ui/Hud";
 import { FrameTelemetry } from "./render/FrameTelemetry";
@@ -69,6 +71,12 @@ const RADIO_MILESTONES = [
 ] as const;
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 createUI();
+/** Sortie opening shot: high over Haven's apron, down past the ground crew to the jet. */
+const INTRO_SECONDS = 5;
+const INTRO_FROM = toWorld(HAVEN, 300, 60);
+const INTRO_TO = toWorld(HAVEN, 52, -684);
+const INTRO_APRON = toWorld(HAVEN, 160, -80);
+
 class Game {
   renderer: T.WebGLRenderer;
   scene = new T.Scene();
@@ -128,11 +136,14 @@ class Game {
   /** What Haven Control has already called this flight. */
   private radio = { milestone: 0, kills: 0, damaged: false, threat: false, terrainCue: 0 };
   private lastLock = false;
+  /** Radio call held until wheels-up: the brief only makes sense once airborne. */
+  private liftoffCall: Line | null = null;
   private hitUntil = 0;
   private shakeAmount = 0;
   private missileEmitters = new Set<string>();
   private damageEmitters = new Set<string>();
   private queryPoint = new T.Vector3();
+  private nozzleWorld = new T.Vector3();
   private flareForward = new T.Vector3();
   private flareUp = new T.Vector3();
   private targetFollow = false;
@@ -186,7 +197,11 @@ class Game {
     });
     this.combatView.loadDefenseModels(this.gltf).catch(() => {});
     // Strike damage shows on the world's buildings; combat never imports world code.
-    this.combat.onTargetDestroyed = (id) => this.airbase()?.destroy(id);
+    this.combat.onTargetDestroyed = (id) => {
+      this.world.airbase.destroy(id);
+      this.world.crowds.strike(id);
+    };
+    this.world.crowds.load(this.gltf).catch(() => {});
     this.physicsReady = import("./physics/CollisionWorld")
       .then(({ CollisionWorld }) => CollisionWorld.create(heightAt))
       .then((physics) => {
@@ -216,6 +231,8 @@ class Game {
       if (this.state === "flight") this.comms.say("machOne", 1.4);
     };
     this.comms.onSubtitle = (text) => this.subtitle(text);
+    this.flight.onTouchdown = (sink) =>
+      this.hud.announce("TOUCHDOWN", `SINK ${sink.toFixed(1)} M/S · Z BRAKES`, this.time);
     this.loadSave();
     this.setState("menu");
     this.bindUI();
@@ -249,6 +266,9 @@ class Game {
           const root = gltf.scene;
           root.rotation.y = -Math.PI / 2;
           root.scale.setScalar(airframeScale(a));
+          // The lowest point of the model sits on the runway when parked.
+          root.updateMatrixWorld(true);
+          root.userData.gear = Math.max(1, -new T.Box3().setFromObject(root).min.y);
           root.traverse((o) => {
             if (o instanceof T.Mesh) {
               o.frustumCulled = false;
@@ -274,7 +294,8 @@ class Game {
     this.planeModel = model;
     this.plane.add(model);
     this.airframe = a;
-    Object.assign(this.flight.performance, a.performance);
+    this.flight.configure(a);
+    this.flight.gearHeight = model.userData.gear ?? 2;
     this.combat.rcs = a.rcs;
     const scale = airframeScale(a);
     this.supersonic.setAirframe(
@@ -282,6 +303,7 @@ class Game {
       a.nozzleRadius * scale,
       airframePoint(a, a.tip),
       a.length,
+      a.engines,
     );
     this.combatView.setAircraftTemplate(model);
   }
@@ -334,7 +356,9 @@ class Game {
     const token = ++this.adversaryToken;
     try {
       const models = await Promise.all(ids.map((id) => this.loadModel(airframe(id))));
-      if (token === this.adversaryToken) this.combatView.setEnemyTemplates(models);
+      if (token !== this.adversaryToken) return;
+      this.combatView.setEnemyTemplates(models);
+      this.world.airbase.setParkedAircraft(models);
     } catch {
       // Enemies fall back to the player's model.
     }
@@ -638,8 +662,13 @@ class Game {
         "ArrowDown",
         "ArrowLeft",
         "ArrowRight",
+        "KeyZ",
+        "KeyI",
+        "KeyM",
       ];
       if (used.includes(e.code)) e.preventDefault();
+      if (!e.repeat && e.code === "KeyM") this.inputActions.tap("cobra");
+      if (!e.repeat && e.code === "KeyI") this.inputActions.tap("engines");
       if (e.code === "KeyC" && !e.repeat) {
         this.cameraMode = 1 - this.cameraMode;
         animate(this.cameraBlend, {
@@ -674,14 +703,14 @@ class Game {
   }
   private start(route?: RouteId, combatMission?: CombatMission) {
     if (!this.loaded) return;
-    const fromShowcase = this.state === "menu" && !route && !combatMission;
     this.ascent.active = false;
     this.hud.reset();
     this.supersonic.clear();
     this.mission.stop();
     this.combat.stop();
     this.combatView.clear();
-    this.airbase()?.reset();
+    this.world.airbase.reset();
+    this.world.crowds.reset();
     this.effects.clear();
     this.telemetry.reset();
     this.missileEmitters.clear();
@@ -689,18 +718,14 @@ class Game {
     this.lastLock = false;
     this.shakeAmount = 0;
     this.comms.clear();
-    if (route) {
-      this.mission.start(route);
-      const gate = this.mission.gate()!;
-      this.flight.reset({ x: gate.x, z: gate.z + 700 });
-      this.flight.position.y = gate.y;
-      this.flight.previous.copy(this.flight.position);
-    } else if (fromShowcase) {
-      // Take off straight out of the title cinematic: same jet, same sky.
-      this.flight.resetDynamics();
-    } else this.flight.reset();
+    // Every sortie starts parked on Haven's runway, engines at idle.
+    if (route) this.mission.start(route);
+    this.flight.resetOnRunway(HAVEN.runway);
+    this.groundCamera = 1;
+    this.pathCamera = 0;
+    this.intro = INTRO_SECONDS;
     if (combatMission) this.combat.start(combatMission, this.flight);
-    this.cameraReady = fromShowcase;
+    this.cameraReady = false;
     this.setState("flight");
     this.targetFollow =
       !!combatMission && this.settings.controlMode === "assisted";
@@ -712,15 +737,15 @@ class Game {
         this.syncSettings();
       });
     this.resetRadio();
-    this.comms.say(combatMission ?? (route ? "routeStart" : "takeoff"), 1.5);
+    this.liftoffCall = combatMission ?? (route ? "routeStart" : "takeoff");
     this.buildRings();
     this.updateObjective();
     this.toast(
       combatMission
         ? `Target follow is ${this.targetFollow ? "ON" : "OFF"}. Left click / ${this.inputActions.bindings.gun.slice(3)} cannon · right click / ${this.inputActions.bindings.missile.slice(3)} missile. G toggles follow; WASD takes manual control.`
         : route
-          ? routes[route].description
-          : "Welcome to Haven. The horizon is yours.",
+          ? `${routes[route].description} The clock starts at wheels-up.`
+          : "Throttle up with Shift, rotate with W at the ROTATE cue. Space lights the afterburner.",
       combatMission
         ? `${combatMission.toUpperCase()} SORTIE`
         : route
@@ -737,16 +762,10 @@ class Game {
     const combatMission = this.combat.active;
     this.start(route ?? undefined, combatMission ?? undefined);
   }
-  /** Ascent: from 600 m over the sea south of Haven to the edge of space. */
+  /** Ascent: from brake release on Haven's runway to the edge of space. */
   private startAscent() {
     if (!this.loaded) return;
     this.start();
-    this.flight.reset({ x: -900, z: 7000 });
-    this.flight.position.y = 600;
-    this.flight.previous.copy(this.flight.position);
-    this.flight.speed = 240;
-    this.flight.velocity.set(0, 0, -240);
-    this.cameraReady = false;
     Object.assign(this.ascent, { active: true, done: false, time: 0 });
     this.resetRadio();
     this.comms.clear();
@@ -841,6 +860,11 @@ class Game {
     this.cameraReady = false;
   }
   private showcaseAltitude = 0;
+  private groundCamera = 0;
+  private pathCamera = 0;
+  private intro = 0;
+  private pathEuler = new T.Euler();
+  private cameraRotation = new T.Quaternion();
   private showcaseEuler = new T.Euler();
   private menuYaw = new T.Quaternion();
   private menuAxis = new T.Vector3(0, 1, 0);
@@ -1108,7 +1132,14 @@ class Game {
       while (this.accumulator >= 1 / 60 && steps++ < 6) {
         this.physics?.update(this.flight.position, this.world.origin, 1 / 60);
         this.flight.step(1 / 60, this.input());
+        if (this.liftoffCall && !this.flight.onGround) {
+          this.comms.say(this.liftoffCall, 1.5);
+          this.liftoffCall = null;
+        }
+        // Wheels on (or just above) a runway: Flight judges contact with the pavement.
         if (
+          !this.flight.onGround &&
+          !overRunway(this.flight.position) &&
           this.physics?.sweep(
             this.flight.previous,
             this.flight.position,
@@ -1172,11 +1203,10 @@ class Game {
         if (this.combat.playerHealth <= 0 && this.combat.active)
           this.flight.crashed = true;
         this.accumulator -= 1 / 60;
-        const message = this.mission.update(
-          1 / 60,
-          this.flight.previous,
-          this.flight.position,
-        );
+        // Route clocks start at wheels-up.
+        const message = this.flight.onGround
+          ? null
+          : this.mission.update(1 / 60, this.flight.previous, this.flight.position);
         if (message) {
           this.toast(
             message,
@@ -1199,7 +1229,9 @@ class Game {
           el("crash-message").textContent =
             this.combat.playerHealth <= 0
               ? "Aircraft lost in combat. Restart the sortie and try a different approach."
-              : "Terrain impact. Clear skies are just one takeoff away.";
+              : this.flight.onGround || overRunway(this.flight.position)
+                ? "Runway excursion or hard landing. Keep it on the centreline: under 5 m/s sink, wings level."
+                : "Terrain impact. Clear skies are just one takeoff away.";
           this.setState("crashed");
           break;
         }
@@ -1229,7 +1261,8 @@ class Game {
     if (this.state === "flight") this.radioCalls();
     if (this.state === "menu") this.showcase(dt);
     if (this.state === "flight" && this.ascent.active && !this.ascent.done) {
-      this.ascent.time += dt;
+      // The clock starts at brake release.
+      if (!this.flight.onGround || this.flight.speed > 0) this.ascent.time += dt;
       if (this.flight.position.y >= 30000) {
         this.ascent.done = true;
         const best = this.ascent.best;
@@ -1285,7 +1318,7 @@ class Game {
       this.sky.clouds.weatherState.storm;
     this.audio.update(
       this.flight.speed,
-      this.flight.throttle,
+      this.state === "menu" ? this.flight.throttle : this.engineOutput(),
       this.state === "flight",
       this.flight.boost,
       this.flight.mach,
@@ -1332,6 +1365,12 @@ class Game {
       el("debug").textContent =
         `${this.fps.toFixed(0)} FPS\nFRAME median ${this.telemetry.median.toFixed(1)} / p95 ${this.telemetry.p95.toFixed(1)} ms\nRENDER SCALE ${(this.settings.dynamicResolution ? this.resolution.scale : 1).toFixed(2)}\n${this.renderer.info.render.calls} draw calls\n${this.renderer.info.render.triangles.toLocaleString()} triangles\n${this.world.stats.patches} terrain patches / ${this.world.stats.chunks} scenery chunks\n${this.effects.stats.smoke} smoke / ${this.effects.stats.flame} flame\n${this.physics?.status.colliders ?? 0} Rapier colliders\n${this.renderer.info.memory.geometries} geometries / ${this.renderer.info.memory.textures} textures\nORIGIN ${this.world.origin.x}, ${this.world.origin.z}`;
   }
+  /** Mean engine spool: the engine note follows the engines, not the throttle lever. */
+  private engineOutput() {
+    let sum = 0;
+    for (const e of this.flight.engines) sum += e.output;
+    return sum / this.flight.engines.length;
+  }
   /** Vapour, plume, contrails and the camera-side speed effects. */
   private updateSpectacle(dt: number) {
     const flying = this.state === "flight";
@@ -1354,9 +1393,24 @@ class Game {
         throttle: this.flight.throttle,
         altitude: this.flight.position.y,
         active: this.state === "flight" || this.state === "menu" || this.photo,
+        // The title showcase flies on its own; only a real sortie shows engine state.
+        engines: this.state === "menu" ? undefined : this.flight.engines,
+        afterburners: this.state === "menu" ? undefined : this.flight.afterburners,
       },
       this.world.origin,
     );
+    // Smoke and fire trail from each failed engine's nozzle.
+    if (flying)
+      for (let i = 0; i < this.flight.engines.length; i++) {
+        const fire = this.flight.engineFire(i);
+        if (fire > 0)
+          this.effects.emitEngineFire(
+            this.supersonic.enginePosition(i, this.planeGlobal, this.plane.quaternion, this.nozzleWorld),
+            this.flight.velocity,
+            fire,
+            dt,
+          );
+      }
     this.shock = Math.max(0, this.shock - dt / 1.3);
     const effects = this.sky.effects;
     effects.shock = this.settings.shake ? this.shock : 0;
@@ -1399,28 +1453,42 @@ class Game {
       this.camera.lookAt(this.look);
       this.camera.fov = 44;
     } else {
-      this.forward.set(0, 0, -1).applyQuaternion(this.rotation);
+      const f = this.flight;
       const blend = this.cameraBlend.value;
+      // Low chase on the runway, rising smoothly after liftoff.
+      this.groundCamera = T.MathUtils.damp(this.groundCamera, f.onGround ? 1 : 0, f.onGround ? 4 : 0.8, dt);
+      // Post-stall the chase rides the flight path instead of whipping with the
+      // nose, drifting off the wing so the cobra reads in profile.
+      this.pathCamera = T.MathUtils.damp(this.pathCamera, f.cobraActive || f.postStall ? 1 : 0, 2.5, dt);
+      const ground = this.groundCamera * (1 - blend),
+        path = this.pathCamera * (1 - blend);
+      if (path > 0.001 && f.velocity.lengthSq() > 1) {
+        const v = f.velocity;
+        this.pathEuler.set(Math.asin(T.MathUtils.clamp(v.y / v.length(), -1, 1)), Math.atan2(-v.x, -v.z), 0, "YXZ");
+        // slerp from the path toward the nose: slerpQuaternions(rotation, this) would alias.
+        this.cameraRotation.setFromEuler(this.pathEuler).slerp(this.rotation, 1 - path);
+      } else this.cameraRotation.copy(this.rotation);
+      this.forward.set(0, 0, -1).applyQuaternion(this.cameraRotation);
       this.offset
         .set(
-          0,
-          T.MathUtils.lerp(7.5, 2.2, blend),
-          T.MathUtils.lerp(33, -10, blend),
+          path * 11,
+          T.MathUtils.lerp(T.MathUtils.lerp(7.5, 2.2, blend), 3.4, ground) - path * 2.5,
+          T.MathUtils.lerp(T.MathUtils.lerp(33, -10, blend), 21, ground) + path * 5,
         )
-        .applyQuaternion(this.rotation)
+        .applyQuaternion(this.cameraRotation)
         .add(this.local);
       const globalX = this.offset.x + this.world.origin.x,
         globalZ = this.offset.z + this.world.origin.z;
       this.offset.y = Math.max(
         this.offset.y,
-        Math.max(0, heightAt(globalX, globalZ)) + 12,
+        Math.max(0, heightAt(globalX, globalZ)) + T.MathUtils.lerp(12, 1.5, this.groundCamera),
       );
       if (!this.cameraReady) {
         this.camera.position.copy(this.offset);
         this.cameraReady = true;
       } else this.camera.position.lerp(this.offset, 1 - Math.exp(-7 * dt));
       this.look.copy(this.local).addScaledVector(this.forward, 120);
-      this.look.y += 2;
+      this.look.y += 2 - ground;
       this.camera.up.set(-Math.sin(this.flight.roll) * 0.13, 1, 0).normalize();
       this.camera.lookAt(this.look);
       this.camera.fov = T.MathUtils.damp(
@@ -1429,6 +1497,26 @@ class Game {
         3,
         dt,
       );
+      // Any key, or the jet rolling, hands the shot straight back to the chase camera.
+      if (this.intro > 0 && (this.keys.size > 0 || f.speed > 3)) this.intro = 0;
+      if (this.intro > 0) {
+        this.intro -= dt;
+        const u = T.MathUtils.smootherstep(1 - this.intro / INTRO_SECONDS, 0, 1);
+        const o = this.world.origin,
+          E = HAVEN.runway.elevation;
+        this.camera.position.set(
+          T.MathUtils.lerp(INTRO_FROM.x, INTRO_TO.x, u) - o.x,
+          T.MathUtils.lerp(E + 28, E + 2.4, u) - o.y,
+          T.MathUtils.lerp(INTRO_FROM.z, INTRO_TO.z, u) - o.z,
+        );
+        // Hold on the apron's crews and parked jets, then pan to the jet on the runway.
+        this.look
+          .set(INTRO_APRON.x - o.x, E + 4 - o.y, INTRO_APRON.z - o.z)
+          .lerp(this.local, T.MathUtils.smoothstep(u, 0.35, 0.85));
+        this.camera.up.set(0, 1, 0);
+        this.camera.lookAt(this.look);
+        this.camera.fov = 50;
+      }
     }
     if (
       this.settings.shake &&
@@ -1473,8 +1561,14 @@ class Game {
         );
         this.audio.cue("flare");
       } else if (event.type === "hit") {
-        if (event.player) this.shakeAmount = this.settings.shake ? 0.8 : 0;
-        else if (event.entityId !== -1) this.hitUntil = this.time + 0.18;
+        // `player` on a hit marks the player's jet as the one struck.
+        if (event.player) {
+          this.shakeAmount = this.settings.shake ? 0.8 : 0;
+          if (event.weapon === "missile") {
+            this.flight.damageEngine();
+            this.shakeAmount = this.settings.shake ? 1.4 : 0;
+          }
+        } else if (event.entityId !== -1) this.hitUntil = this.time + 0.18;
       } else if (event.type === "complete" || event.type === "failed") {
         if (event.type === "complete") this.comms.say("clear", 0.8);
         else if (this.combat.status.result === "Transport lost") this.comms.say("escortLost", 0.8);
@@ -1484,11 +1578,6 @@ class Game {
         );
       }
     }
-  }
-  /** Blackridge buildings, when the world provides them. */
-  private airbase() {
-    return (this.world as { airbase?: { destroy(id: string): void; reset(): void } })
-      .airbase;
   }
   private combatBlocked(from: T.Vector3, to: T.Vector3) {
     if (this.physics?.sweep(from, to, undefined, 0.5)) return true;
@@ -1543,18 +1632,30 @@ class Game {
     const agl =
       this.flight.position.y -
       Math.max(0, heightAt(this.flight.position.x, this.flight.position.z));
-    const terrain = this.state === "flight" && this.terrainAhead();
+    const f = this.flight;
+    // Ground proximity stays quiet on the runway and around the airfields.
+    const field = f.onGround || overRunway(f.position) || this.nearRunway();
+    const terrain = this.state === "flight" && !field && this.terrainAhead();
     if (terrain && this.time - this.radio.terrainCue > 1.1) {
       this.audio.terrainAlarm();
       this.radio.terrainCue = this.time;
     }
+    const fire = f.engines.map((e) => e.failed);
+    const side =
+      fire.length === 2 ? (fire[0] && fire[1] ? " · BOTH" : fire[0] ? " · LEFT" : " · RIGHT") : "";
     this.warningText =
       this.state === "flight"
-        ? agl < 100 || terrain
-          ? "TERRAIN · PULL UP"
-          : this.flight.speed < 85
-            ? "LOW AIRSPEED · INCREASE THRUST"
-            : ""
+        ? fire.includes(true)
+          ? `ENGINE FIRE${side}`
+          : (agl < 100 && !field) || terrain
+            ? "TERRAIN · PULL UP"
+            : f.onGround
+              ? f.speed >= f.rotateSpeed && f.throttle > 0.3
+                ? "ROTATE · W"
+                : ""
+              : f.speed < 85 && !f.cobraActive
+                ? "LOW AIRSPEED · INCREASE THRUST"
+                : ""
         : "";
     this.updateCombatHUD();
     el("warning").textContent = this.warningText;
@@ -1596,6 +1697,15 @@ class Game {
       agl,
       throttle: this.flight.throttle,
       boost: this.flight.boost,
+      systems: {
+        engines: this.flight.engines,
+        status: this.flight.engineStatus,
+        airbrake: this.flight.airbrake,
+        onGround: this.flight.onGround,
+        aoa: this.flight.aoa,
+        postStall: this.flight.postStall,
+        hint: this.flight.hintTime > 0 ? this.flight.hint : "",
+      },
       time: this.time,
       mode: this.combat.active
         ? `A-A  ${status.missiles} MSL  ${status.gunAmmo} GUN  ${status.flares} FLR`
@@ -1933,6 +2043,12 @@ class Game {
       this.comms.say("damaged", 0.4);
     }
   }
+  /** Within a few kilometres of a runway at approach height. */
+  private nearRunway() {
+    const p = this.flight.position;
+    const r = runwayAt(p.x, p.z, 400, 3000);
+    return !!r && p.y < r.elevation + 450;
+  }
   /** Ground-proximity look-ahead: will the current path meet terrain within 4 s? */
   private terrainAhead() {
     const p = this.flight.position,
@@ -2058,7 +2174,8 @@ class Game {
         0.8,
         1.3,
       );
-      const allowed = /^Key[FXTVGHJKZ]$/;
+      // Z is the airbrake; older saves that bound it fall back to the defaults.
+      const allowed = /^Key[FXTVGHJK]$/;
       const next = { ...defaultBindings, ...s.bindings };
       if (
         (Object.keys(defaultBindings) as CombatAction[]).every((action) =>

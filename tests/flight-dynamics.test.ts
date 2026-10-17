@@ -1,0 +1,265 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { Euler, Vector3 } from "three";
+import { Flight, neutral, runwayAt, sweptCollision } from "../src/flight.ts";
+import { airframe, type Airframe } from "../src/aircraft.ts";
+import { BLACKRIDGE, HAVEN, runwayThreshold } from "../src/world/bases.ts";
+
+const DEG = Math.PI / 180;
+const step = 1 / 60;
+function jet(id: string, overrides: Partial<Airframe> = {}) {
+  const f = new Flight();
+  f.configure({ ...airframe(id), ...overrides });
+  return f;
+}
+/** Level flight at `speed`, settled for half a second. */
+function cruising(f: Flight, speed: number, throttle = 0.63) {
+  f.reset();
+  f.position.y = 3000;
+  f.previous.copy(f.position);
+  f.speed = speed;
+  f.velocity.set(0, 0, -speed);
+  f.throttle = throttle;
+  for (let i = 0; i < 30; i++) f.step(step, { ...neutral, throttleTarget: throttle });
+}
+
+test("a runway start is parked on the threshold with engines at idle", () => {
+  const f = jet("sf35");
+  f.gearHeight = 1.9;
+  f.resetOnRunway(HAVEN.runway);
+  const t = runwayThreshold(HAVEN.runway);
+  assert.equal(f.onGround, true);
+  assert.equal(f.speed, 0);
+  assert.equal(f.throttle, 0.08);
+  assert.ok(Math.abs(f.position.x - t.x) < 1e-9 && Math.abs(f.position.z - t.z) < 1e-9);
+  assert.ok(Math.abs(f.position.y - (HAVEN.runway.elevation + 1.9)) < 1e-9);
+  assert.ok(f.engines.every((e) => !e.failed && Math.abs(e.output - 0.08) < 1e-9));
+  // Idle thrust does not creep, brakes or not; the jet stays put.
+  for (let i = 0; i < 120; i++) f.step(step, neutral);
+  assert.equal(f.speed, 0);
+  assert.equal(f.crashed, false);
+  assert.equal(f.onGround, true);
+});
+
+test("takeoff roll reaches Vr, the nose only rotates from Vr, and the jet lifts off", () => {
+  for (const id of ["sf35", "su57", "mig21"]) {
+    const f = jet(id);
+    f.resetOnRunway(HAVEN.runway);
+    const start = f.position.clone();
+    const vr = f.rotateSpeed;
+    assert.ok(vr >= 74 && vr <= 86);
+    let time = 0,
+      liftoff = -1;
+    while (time < 40 && !f.crashed) {
+      // Pilot holds full back stick from brake release.
+      f.step(step, { ...neutral, throttle: 1, pitch: 1 });
+      time += step;
+      if (f.onGround && f.speed < 0.85 * vr) assert.equal(f.pitch, 0, `${id} rotated early`);
+      if (!f.onGround && liftoff < 0) {
+        liftoff = time;
+        assert.ok(f.speed >= vr && f.speed < vr * 1.3, `${id} lifted off at ${f.speed}`);
+        assert.ok(start.distanceTo(f.position) < HAVEN.runway.length - 200);
+      }
+      if (liftoff > 0 && time > liftoff + 4) break;
+    }
+    assert.ok(liftoff > 4 && liftoff < 20, `${id} liftoff at ${liftoff}s`);
+    assert.equal(f.crashed, false);
+    assert.equal(f.onGround, false);
+    assert.ok(f.position.y > HAVEN.runway.elevation + 20);
+  }
+});
+
+test("without rotation the jet stays glued to the runway; wheel brakes stop it", () => {
+  const f = jet("su57");
+  f.resetOnRunway(HAVEN.runway);
+  for (let i = 0; i < 60 * 6; i++) f.step(step, { ...neutral, throttle: 1 });
+  assert.equal(f.onGround, true);
+  assert.ok(f.speed > 40);
+  assert.ok(Math.abs(f.position.y - (HAVEN.runway.elevation + f.gearHeight)) < 1e-9);
+  let time = 0;
+  while (f.speed > 0 && time < 30) {
+    f.step(step, { ...neutral, throttle: -1, airbrake: true });
+    time += step;
+  }
+  assert.equal(f.speed, 0);
+  assert.ok(time < 15);
+  assert.equal(f.crashed, false);
+});
+
+test("Pugachev's cobra: deep for a supermanoeuvrable jet, shallow for a 3rd-generation one", () => {
+  for (const mode of ["assisted", "advanced"] as const) {
+    const results: Record<string, { peak: number; dAlt: number; bleed: number; time: number }> = {};
+    for (const [id, sm] of [
+      ["su57", 1],
+      ["mig21", 0.3],
+    ] as const) {
+      const f = jet(id, { supermanoeuvre: sm });
+      f.controlMode = mode;
+      cruising(f, 160, 0.3);
+      const y0 = f.position.y,
+        v0 = f.speed;
+      f.step(step, { ...neutral, cobra: true });
+      assert.equal(f.cobraActive, true);
+      let peak = 0,
+        time = 0;
+      while (f.cobraActive && time < 5) {
+        f.step(step, { ...neutral, pitch: 1, roll: 1 });
+        time += step;
+        peak = Math.max(peak, f.aoa);
+        if (f.aoa > 34 * DEG) assert.equal(f.postStall, true);
+      }
+      results[id] = { peak, dAlt: f.position.y - y0, bleed: 1 - f.speed / v0, time };
+      // Normal flight resumes on the flight path.
+      for (let i = 0; i < 60; i++) f.step(step, neutral);
+      assert.equal(f.crashed, false);
+      assert.equal(f.postStall, false);
+    }
+    const su57 = results.su57,
+      mig21 = results.mig21;
+    assert.ok(su57.peak > 90 * DEG && su57.peak < 125 * DEG, `peak ${su57.peak / DEG}`);
+    assert.ok(mig21.peak < 45 * DEG && mig21.peak > 25 * DEG, `peak ${mig21.peak / DEG}`);
+    assert.ok(Math.abs(su57.dAlt) < 50, `altitude change ${su57.dAlt}`);
+    assert.ok(su57.bleed > 0.33 && su57.bleed < 0.55, `bleed ${su57.bleed}`);
+    assert.ok(su57.time < 3, `duration ${su57.time}`);
+    assert.ok(mig21.bleed < su57.bleed);
+  }
+});
+
+test("the cobra is refused outside its speed window with a pilot hint", () => {
+  const f = jet("su57");
+  cruising(f, 260);
+  assert.equal(f.startCobra(), false);
+  assert.match(f.hint, /TOO FAST/);
+  cruising(f, 80);
+  assert.equal(f.startCobra(), false);
+  assert.match(f.hint, /TOO SLOW/);
+  f.resetOnRunway(HAVEN.runway);
+  assert.equal(f.startCobra(), false);
+});
+
+test("angle of attack is tracked in normal flight", () => {
+  const f = jet("sf35");
+  f.controlMode = "advanced";
+  cruising(f, 200);
+  assert.ok(f.aoa < 3 * DEG);
+  for (let i = 0; i < 60; i++) f.step(step, { ...neutral, pitch: 1 });
+  assert.ok(f.aoa > 5 * DEG && f.aoa < 34 * DEG);
+  assert.equal(f.postStall, false);
+});
+
+test("losing one engine of a twin halves thrust and yaws toward the dead side", () => {
+  const f = jet("su57");
+  f.controlMode = "advanced";
+  cruising(f, 200, 1);
+  for (let i = 0; i < 120; i++) f.step(step, { ...neutral, throttle: 1 });
+  const healthy = f.thrust;
+  const yaw = f.yaw;
+  assert.equal(f.damageEngine(0), 1);
+  f.step(step, { ...neutral, throttle: 1 });
+  assert.ok(Math.abs(f.thrust / healthy - 0.5) < 0.02, `ratio ${f.thrust / healthy}`);
+  assert.equal(f.engines[0].output, 0);
+  assert.ok(f.engineFire(0) > 0.5 && f.engineFire(1) === 0);
+  // Left engine dead: the live right engine swings the nose left (+yaw).
+  for (let i = 0; i < 120; i++) f.step(step, { ...neutral, throttle: 1 });
+  assert.ok(f.yaw - yaw > 0.05);
+  // No afterburner from the dead side.
+  f.step(step, { ...neutral, throttle: 1, boost: true });
+  assert.deepEqual(f.afterburners, [false, true]);
+  assert.equal(f.damageEngine(), 0);
+  f.step(step, neutral);
+  assert.equal(f.thrust, 0);
+  f.reset();
+  assert.ok(f.engines.every((e) => !e.failed));
+});
+
+test("a single-engine jet glides after its engine fails", () => {
+  const f = jet("sf35");
+  cruising(f, 200);
+  assert.equal(f.damageEngine(), 0);
+  f.step(step, neutral);
+  assert.equal(f.thrust, 0);
+});
+
+test("differential thrust gives a healthy twin faster rudder yaw", () => {
+  const yawIn = (engines: 1 | 2) => {
+    const f = jet("su57", { engines });
+    f.controlMode = "advanced";
+    cruising(f, 200);
+    const start = f.yaw;
+    for (let i = 0; i < 60; i++) f.step(step, { ...neutral, yaw: 1 });
+    if (engines === 2) assert.ok(f.engines[0].output < f.engines[1].output);
+    return f.yaw - start;
+  };
+  const ratio = yawIn(2) / yawIn(1);
+  assert.ok(ratio > 1.25 && ratio < 1.45, `ratio ${ratio}`);
+});
+
+test("engine master switch spools down to nothing and relights over about three seconds", () => {
+  const f = jet("su57");
+  cruising(f, 200);
+  const running = f.thrust;
+  f.step(step, { ...neutral, engineToggle: true });
+  assert.equal(f.engineStatus, "ENG OFF");
+  for (let i = 0; i < 300; i++) f.step(step, { ...neutral, boost: true });
+  assert.ok(f.thrust < running * 0.05);
+  assert.equal(f.boost, false);
+  f.step(step, { ...neutral, engineToggle: true });
+  assert.equal(f.engineStatus, "SPOOLING");
+  for (let i = 0; i < 60; i++) f.step(step, neutral);
+  const early = f.thrust;
+  for (let i = 0; i < 150; i++) f.step(step, neutral);
+  assert.equal(f.engineStatus, "");
+  assert.ok(early < f.thrust * 0.5);
+});
+
+const touchdowns: number[] = [];
+function approach(sink: number, roll = 0, pitch = 4 * DEG) {
+  const f = jet("sf35");
+  f.reset();
+  f.onTouchdown = (s) => touchdowns.push(s);
+  const r = HAVEN.runway;
+  f.position.set(r.x, r.elevation + f.gearHeight + 0.3, r.z + 200);
+  f.previous.copy(f.position);
+  f.speed = 75;
+  f.velocity.set(0, -sink, -75);
+  f.quaternion.setFromEuler(new Euler(pitch, 0, roll, "YXZ"));
+  for (let i = 0; i < 30 && !f.onGround && !f.crashed; i++) {
+    f.velocity.y = -sink;
+    f.step(step, neutral);
+  }
+  return f;
+}
+
+test("gentle touchdowns roll out on the runway; hard or banked ones crash", () => {
+  const f = approach(2);
+  assert.equal(f.crashed, false);
+  assert.equal(f.onGround, true);
+  assert.equal(touchdowns.length, 1);
+  assert.ok(touchdowns[0] > 1.9 && touchdowns[0] < 2.5);
+  let time = 0;
+  while (f.speed > 0 && time < 40) {
+    f.step(step, { ...neutral, airbrake: true, throttle: -1 });
+    time += step;
+  }
+  assert.equal(f.speed, 0);
+  assert.equal(f.crashed, false);
+  // The rollout never bounces back into the air.
+  assert.equal(touchdowns.length, 1);
+  assert.equal(f.onGround, true);
+  assert.equal(approach(8).crashed, true);
+  assert.equal(approach(2, 30 * DEG).crashed, true);
+  assert.equal(approach(2, 0, -8 * DEG).crashed, true);
+});
+
+test("the runway surface is not a collision; terrain elsewhere still is", () => {
+  for (const { runway: r } of [HAVEN, BLACKRIDGE]) {
+    const t = runwayThreshold(r);
+    const wheels = new Vector3(t.x, r.elevation + 1.8, t.z);
+    assert.ok(runwayAt(t.x, t.z));
+    assert.equal(sweptCollision(wheels, wheels.clone().setY(r.elevation + 2.5)), false);
+    // Through the pavement is still a crash.
+    assert.equal(sweptCollision(wheels, wheels.clone().setY(r.elevation - 1)), true);
+  }
+  // Same height over the hills beside Haven's runway: terrain impact.
+  assert.equal(sweptCollision(new Vector3(-600, 31, 0), new Vector3(-600, 31, -50)), true);
+});

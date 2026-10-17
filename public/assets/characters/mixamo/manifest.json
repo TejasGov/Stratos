@@ -1,0 +1,187 @@
+{
+  "version": 1,
+  "source": "Adobe Mixamo (free for use in games); FBX 2019 converted by scripts/mixamo-to-glb.py",
+  "units": "metres",
+  "conventions": {
+    "up": "+Y",
+    "facing": "+Z",
+    "origin": "feet on the ground",
+    "skeleton": "Mixamo 65-bone rig; every bone renamed to mixamorig:<Bone> so clips bind across all characters (three.js sanitises the name to mixamorig<Bone>)",
+    "clips": "Armature only, one action per file, 30 fps, made on Swat Guy. Locomotion is in place. Only Hips has meaningful translation.",
+    "characters": "Mesh decimated to about 15k triangles, textures at most 1024 px JPEG"
+  },
+  "characters": [
+    {
+      "id": "swat",
+      "file": "swat.glb",
+      "facing": "+Z",
+      "bytes": 1804664,
+      "description": "Swat Guy: black tactical SWAT gear and helmet"
+    },
+    {
+      "id": "steve",
+      "file": "steve.glb",
+      "facing": "+Z",
+      "bytes": 2883952,
+      "description": "Steve: casual civilian (ground crew)"
+    },
+    {
+      "id": "david",
+      "file": "david.glb",
+      "facing": "+Z",
+      "bytes": 2298140,
+      "description": "David: casual civilian (ground crew)"
+    },
+    {
+      "id": "pete",
+      "file": "pete.glb",
+      "facing": "+Z",
+      "bytes": 3046092,
+      "description": "Pete: casual civilian (ground crew)"
+    },
+    {
+      "id": "alex",
+      "file": "alex.glb",
+      "facing": "+Z",
+      "bytes": 892640,
+      "description": "Alex: casual civilian (ground crew)"
+    },
+    {
+      "id": "gasmask",
+      "file": "gasmask.glb",
+      "facing": "+Z",
+      "bytes": 1731236,
+      "description": "Gas Mask: soldier in fatigues with gas mask"
+    }
+  ],
+  "clips": [
+    {
+      "name": "walk",
+      "file": "clips/walk.glb",
+      "loop": true,
+      "duration": 1.267,
+      "source": "Male Standard Walk (in place)",
+      "bytes": 98240
+    },
+    {
+      "name": "jog",
+      "file": "clips/jog.glb",
+      "loop": true,
+      "duration": 2.6,
+      "source": "Jogging (in place)",
+      "bytes": 130456
+    },
+    {
+      "name": "run",
+      "file": "clips/run.glb",
+      "loop": true,
+      "duration": 0.733,
+      "source": "Running With Intention (in place)",
+      "bytes": 81668
+    },
+    {
+      "name": "idle",
+      "file": "clips/idle.glb",
+      "loop": true,
+      "duration": 6.033,
+      "source": "Standing Idle",
+      "bytes": 179960
+    },
+    {
+      "name": "idle-look",
+      "file": "clips/idle-look.glb",
+      "loop": true,
+      "duration": 5.233,
+      "source": "Standing Idle 02 (looking around)",
+      "bytes": 199920
+    },
+    {
+      "name": "talk",
+      "file": "clips/talk.glb",
+      "loop": true,
+      "duration": 10.3,
+      "source": "Talking: General Conversation",
+      "bytes": 329148
+    },
+    {
+      "name": "talk-funny",
+      "file": "clips/talk-funny.glb",
+      "loop": true,
+      "duration": 5.967,
+      "source": "Talking: Finding Something Funny",
+      "bytes": 218868
+    },
+    {
+      "name": "agree",
+      "file": "clips/agree.glb",
+      "loop": false,
+      "duration": 1.867,
+      "source": "Agreeing: Yes",
+      "bytes": 111524
+    },
+    {
+      "name": "salute",
+      "file": "clips/salute.glb",
+      "loop": false,
+      "duration": 2.867,
+      "source": "Salute: Formal Military Salute",
+      "bytes": 138492
+    },
+    {
+      "name": "wave",
+      "file": "clips/wave.glb",
+      "loop": false,
+      "duration": 0.567,
+      "source": "Waving",
+      "bytes": 73608
+    },
+    {
+      "name": "pushup",
+      "file": "clips/pushup.glb",
+      "loop": true,
+      "duration": 1.567,
+      "source": "Push Up: Basic",
+      "bytes": 85724
+    },
+    {
+      "name": "jumping-jacks",
+      "file": "clips/jumping-jacks.glb",
+      "loop": true,
+      "duration": 1.1,
+      "source": "Jumping Jacks: Standard",
+      "bytes": 95060
+    },
+    {
+      "name": "situps",
+      "file": "clips/situps.glb",
+      "loop": true,
+      "duration": 2.267,
+      "source": "Situps",
+      "bytes": 124708
+    },
+    {
+      "name": "backflip",
+      "file": "clips/backflip.glb",
+      "loop": false,
+      "duration": 2.2,
+      "source": "Backflip: Standing",
+      "bytes": 112868
+    },
+    {
+      "name": "dying-backwards",
+      "file": "clips/dying-backwards.glb",
+      "loop": false,
+      "duration": 4.633,
+      "source": "Dying Backwards: Shot To The Chest",
+      "bytes": 184796
+    },
+    {
+      "name": "death",
+      "file": "clips/death.glb",
+      "loop": false,
+      "duration": 3.067,
+      "source": "Death From Standing Idle",
+      "bytes": 144312
+    }
+  ]
+}

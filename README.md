@@ -66,6 +66,17 @@ Every image is a real-time frame from the game (photo mode or the title cinemati
 - **Supersonic flight.** A Mach-aware flight model (ISA density, thrust lapse, transonic wave
   drag), vapour cones, sonic booms with a screen shock ripple, afterburner shock diamonds per
   engine, contrails above 8.5 km and wingtip vortices in hard pulls.
+- **Two air bases.** Every sortie starts on the runway at **Haven**, the home base, with
+  parked jets, a tower, hangars, edge and approach lights and PAPI. **Blackridge**, the enemy
+  base on the north coast, has a rotating radar, a fuel farm and aircraft shelters to strike.
+- **Air defences.** Radar-guided and heat-seeking SAM sites detect you by radar cross-section,
+  terrain line of sight, ground clutter below 100 m and the Doppler notch, so stealth jets low in
+  the valleys get much closer. Heat-seekers can be decoyed by magnesium flare salvos.
+- **People on the ground.** Mixamo-animated soldiers and ground crew drill, jog, chat, patrol
+  and salute at both bases; Blackridge's guards fall when their installation is destroyed.
+- **Supermanoeuvres and damage.** Pugachev's cobra scaled by each airframe's agility, airbrake,
+  engine shutdown and relight, differential thrust on twin-engine jets, and missile hits that
+  set one engine on fire and then the other.
 - **A fighter HUD.** Conformal pitch ladder, flight-path marker, speed/altitude tapes, Mach, G,
   lead pipper and target boxes, with milestones at the tropopause and the stratosphere.
 - **HDR post.** Physically based exposure with eye adaptation, bloom, crepuscular rays, lens
@@ -127,6 +138,11 @@ On the title screen, choose an aircraft in the hangar, the time of day (dawn to 
 sky (clear, fair, towering or storm), then **Take off** to fly on from the cinematic, or pick a
 challenge or sortie.
 
+Every flight opens with a short shot over Haven's apron (any key skips it), then starts parked
+on the runway. Hold **Shift** to spool up (add **Space** for afterburner), pull **W** at the
+ROTATE cue and climb out. To come home, line up with a runway and touch down gently: under
+5 m/s sink, wings level. Hold **Z** to brake.
+
 For a first climb, choose **Ascent**: hold **Space** for afterburner and pitch up. Thin air means
 more speed and softer controls; the HUD calls out the tropopause, the stratosphere and the edge
 of space.
@@ -169,6 +185,9 @@ browser.
 | **Q / E**                 | Rudder left / right                      |
 | **Shift / Ctrl**          | Increase / decrease thrust               |
 | **Space**                 | Afterburner                              |
+| **Z** — hold              | Airbrake; wheel brakes on the ground     |
+| **M**                     | Pugachev's cobra (110–190 m/s)           |
+| **I**                     | Engine master: shut down / relight       |
 | **C**                     | Chase / forward camera                   |
 | **P**                     | Photo mode                               |
 | **Left mouse / F** — hold | Fire cannon                              |
@@ -192,6 +211,8 @@ Combat keys are remappable. If G is assigned to a weapon action, use the HUD but
 | A / B                    | Cannon / missile              |
 | X / Y                    | Countermeasure / cycle target |
 | LB                       | Afterburner                   |
+| RB                       | Airbrake / wheel brakes       |
+| Left stick — press       | Cobra                         |
 
 Standard gamepad mappings have automated coverage; physical devices and HOTAS support still need
 hardware testing. Gamepad B fires a missile; keyboard B starts a patrol.
@@ -220,14 +241,14 @@ src/
 ├── audio.ts             Sample layers, thunder, boom, radio chain and synthesized fallbacks
 ├── comms.ts             Haven Control: radio lines, priorities, cooldowns and subtitles
 ├── sky/                 Atmosphere LUTs, clouds, lightning, composite and post
-├── world/               Height function, GPU clipmap terrain, scenery
+├── world/               Height function, GPU clipmap terrain, scenery, air bases, crowds
 ├── effects/             Supersonic effects, pooled particles and trails
 ├── combat/              Missions, enemy AI, weapons and visuals
 ├── render/              Terrain materials, dynamic resolution, telemetry
 ├── ui/                  Canvas HUD
 ├── input/               Keyboard and standard gamepad actions
 └── physics/             Rapier collision and query world
-public/assets/           Aircraft fleet, audio, voice and Poly Haven materials
+public/assets/           Aircraft fleet, SAM vehicles, characters, audio, voice, Poly Haven materials
 tests/                   Simulation, terrain, combat, input, fleet and asset checks
 docs/                    Research and implementation notes
 ```
@@ -237,8 +258,9 @@ npm test          # Run automated tests
 npm run build     # Type-check and build into dist/
 ```
 
-The suite has **54 tests** covering flight stability and frame-rate independence, collision and
-rebasing, the collision surface matching the drawn terrain, streaming, weapons and kills,
+The suite has **108 tests** covering flight stability and frame-rate independence, runway
+takeoff and landing, the cobra, engine failure, air-defence detection and decoys, base layout
+and crowd placement, collision and rebasing, the collision surface matching the drawn terrain, streaming, weapons and kills,
 aim-assist limits, input buffering, bounded effects, fleet geometry and ratings, dynamic
 resolution and asset integrity.
 
@@ -256,6 +278,12 @@ text-to-3D (2K PBR textures), then optimized with glTF Transform (meshopt geomet
 about 49 000 triangles and 1.2–1.6 MB each. Designs are original interpretations inspired by the
 real aircraft named in the fleet table; nozzle exits and wingtips were measured from the meshes to
 place engine effects. Cockpit interiors and animated control surfaces are not included.
+
+**Characters.** Soldiers and ground crew (Swat Guy, Steve, David, Pete, Alex, Gas Mask) and
+their animations are from [Adobe Mixamo](https://www.mixamo.com), converted with
+`scripts/mixamo-to-glb.py`; the list is in the
+[character manifest](public/assets/characters/mixamo/manifest.json). SAM launcher and radar
+vehicles were generated with Meshy ([defence notes](public/assets/defense/README.md)).
 
 **Sound.** Generated for this project with [ElevenLabs](https://elevenlabs.io) Sound Effects and
 mastered for looping; prompts and processing are listed in the
