@@ -28,6 +28,8 @@ export interface Airframe {
   /** 0..1 post-stall authority: 1 flies a full Pugachev's cobra, low values only a shallow pitch-up. */
   supermanoeuvre: number;
   thrustVectoring: boolean;
+  /** Published top speed at altitude (Mach); drag climbs steeply past it. */
+  maxMach: number;
 }
 
 const MODEL_LENGTH = 1.9;
@@ -49,6 +51,7 @@ export const FLEET: Airframe[] = [
     rcs: 0.15,
     supermanoeuvre: 0.45,
     thrustVectoring: false,
+    maxMach: 1.6,
   },
   {
     id: "su57",
@@ -69,6 +72,7 @@ export const FLEET: Airframe[] = [
     rcs: 0.35,
     supermanoeuvre: 1.0,
     thrustVectoring: true,
+    maxMach: 2.0,
   },
   {
     id: "f22",
@@ -89,6 +93,7 @@ export const FLEET: Airframe[] = [
     rcs: 0.1,
     supermanoeuvre: 0.9,
     thrustVectoring: true,
+    maxMach: 2.25,
   },
   {
     id: "j20",
@@ -109,6 +114,7 @@ export const FLEET: Airframe[] = [
     rcs: 0.3,
     supermanoeuvre: 0.55,
     thrustVectoring: false,
+    maxMach: 2.0,
   },
   {
     id: "su30",
@@ -129,6 +135,7 @@ export const FLEET: Airframe[] = [
     rcs: 1.0,
     supermanoeuvre: 1.0,
     thrustVectoring: true,
+    maxMach: 2.0,
   },
   {
     id: "rafale",
@@ -146,6 +153,7 @@ export const FLEET: Airframe[] = [
     rcs: 0.55,
     supermanoeuvre: 0.6,
     thrustVectoring: false,
+    maxMach: 1.8,
   },
   {
     id: "typhoon",
@@ -166,6 +174,7 @@ export const FLEET: Airframe[] = [
     rcs: 0.65,
     supermanoeuvre: 0.55,
     thrustVectoring: false,
+    maxMach: 2.0,
   },
   {
     id: "tejas",
@@ -183,6 +192,7 @@ export const FLEET: Airframe[] = [
     rcs: 0.6,
     supermanoeuvre: 0.5,
     thrustVectoring: false,
+    maxMach: 1.6,
   },
   {
     id: "mig21",
@@ -200,6 +210,7 @@ export const FLEET: Airframe[] = [
     rcs: 1.0,
     supermanoeuvre: 0.3,
     thrustVectoring: false,
+    maxMach: 2.05,
   },
 ];
 
@@ -224,7 +235,7 @@ export function airframeRatings(a: Airframe) {
   const rate = (v: number, lo: number, hi: number, min: number) =>
     Math.round(T.MathUtils.clamp(min + ((v - lo) / (hi - lo)) * (10 - min), 1, 10));
   return {
-    speed: rate((p.afterburner * 0.6 + p.thrust * 0.4) / p.drag, 0.95, 1.19, 4),
+    speed: rate(a.maxMach, 1.6, 2.25, 4),
     agility: rate(p.agility, 0.82, 1.25, 3),
     climb: rate((p.thrust + p.afterburner) / 2, 0.95, 1.12, 4),
   };

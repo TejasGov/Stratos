@@ -335,7 +335,7 @@ class Game {
     el("hangar-index").textContent = `${index + 1} / ${FLEET.length}`;
     el("hangar-name").textContent = a.name;
     el("hangar-gen").textContent = a.generation;
-    el("hangar-inspired").textContent = `Inspired by the ${a.inspiredBy} · ${a.role}`;
+    el("hangar-inspired").textContent = `Inspired by the ${a.inspiredBy} · ${a.role} · Mach ${a.maxMach}`;
     const ratings = airframeRatings(a);
     el("hangar-stats").innerHTML = (["speed", "agility", "climb"] as const)
       .map(
