@@ -291,9 +291,8 @@ vehicles were generated with Meshy ([defence notes](public/assets/defense/README
 mastered for looping; prompts and processing are listed in the
 [audio notes](public/assets/audio/README.md).
 
-**Music.** The title theme, *Stratos*, is an original arena-rock anthem generated for this
-project with ElevenLabs Music v2.5 from lyrics written for the game; the take was chosen
-after a speech-to-text check of the vocals and mastered to about −13 LUFS
+**Music.** The title theme, *Stratos*, is an original cinematic orchestral instrumental generated
+for this project with ElevenLabs Music v2.5 and mastered to about −14 LUFS
 ([`public/assets/music/stratos-theme.mp3`](public/assets/music/stratos-theme.mp3)).
 
 **Voice.** Haven Control is voiced with ElevenLabs v4 text to speech (library voice *Eryn – Strong
