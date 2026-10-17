@@ -7,6 +7,7 @@ import { World } from "./world/World";
 import { heightAt, renderedHeightAt, SEED } from "./world/terrain";
 import { Flight, neutral, overRunway, runwayAt } from "./flight";
 import { HAVEN } from "./world/bases";
+import { toWorld } from "./world/baseLayout";
 import { Mission, landmarks, routes, type RouteId } from "./missions";
 import { FlightAudio } from "./audio";
 import { Comms, type Line } from "./comms";
@@ -70,6 +71,12 @@ const RADIO_MILESTONES = [
 ] as const;
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 createUI();
+/** Sortie opening shot: high over Haven's apron, down past the ground crew to the jet. */
+const INTRO_SECONDS = 5;
+const INTRO_FROM = toWorld(HAVEN, 300, 60);
+const INTRO_TO = toWorld(HAVEN, 52, -684);
+const INTRO_APRON = toWorld(HAVEN, 160, -80);
+
 class Game {
   renderer: T.WebGLRenderer;
   scene = new T.Scene();
@@ -716,6 +723,7 @@ class Game {
     this.flight.resetOnRunway(HAVEN.runway);
     this.groundCamera = 1;
     this.pathCamera = 0;
+    this.intro = INTRO_SECONDS;
     if (combatMission) this.combat.start(combatMission, this.flight);
     this.cameraReady = false;
     this.setState("flight");
@@ -854,6 +862,7 @@ class Game {
   private showcaseAltitude = 0;
   private groundCamera = 0;
   private pathCamera = 0;
+  private intro = 0;
   private pathEuler = new T.Euler();
   private cameraRotation = new T.Quaternion();
   private showcaseEuler = new T.Euler();
@@ -1456,8 +1465,8 @@ class Game {
       if (path > 0.001 && f.velocity.lengthSq() > 1) {
         const v = f.velocity;
         this.pathEuler.set(Math.asin(T.MathUtils.clamp(v.y / v.length(), -1, 1)), Math.atan2(-v.x, -v.z), 0, "YXZ");
-        this.cameraRotation.setFromEuler(this.pathEuler);
-        this.cameraRotation.slerpQuaternions(this.rotation, this.cameraRotation, path);
+        // slerp from the path toward the nose: slerpQuaternions(rotation, this) would alias.
+        this.cameraRotation.setFromEuler(this.pathEuler).slerp(this.rotation, 1 - path);
       } else this.cameraRotation.copy(this.rotation);
       this.forward.set(0, 0, -1).applyQuaternion(this.cameraRotation);
       this.offset
@@ -1488,6 +1497,26 @@ class Game {
         3,
         dt,
       );
+      // Any key, or the jet rolling, hands the shot straight back to the chase camera.
+      if (this.intro > 0 && (this.keys.size > 0 || f.speed > 3)) this.intro = 0;
+      if (this.intro > 0) {
+        this.intro -= dt;
+        const u = T.MathUtils.smootherstep(1 - this.intro / INTRO_SECONDS, 0, 1);
+        const o = this.world.origin,
+          E = HAVEN.runway.elevation;
+        this.camera.position.set(
+          T.MathUtils.lerp(INTRO_FROM.x, INTRO_TO.x, u) - o.x,
+          T.MathUtils.lerp(E + 28, E + 2.4, u) - o.y,
+          T.MathUtils.lerp(INTRO_FROM.z, INTRO_TO.z, u) - o.z,
+        );
+        // Hold on the apron's crews and parked jets, then pan to the jet on the runway.
+        this.look
+          .set(INTRO_APRON.x - o.x, E + 4 - o.y, INTRO_APRON.z - o.z)
+          .lerp(this.local, T.MathUtils.smoothstep(u, 0.35, 0.85));
+        this.camera.up.set(0, 1, 0);
+        this.camera.lookAt(this.look);
+        this.camera.fov = 50;
+      }
     }
     if (
       this.settings.shake &&
