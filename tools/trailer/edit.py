@@ -76,7 +76,7 @@ grade = "eq=contrast=1.08:saturation=1.12:gamma=0.97,vignette=PI/5"
 def picture(vertical):
     chain = [grade]
     if vertical:
-        chain.append("crop=ih*9/16:ih,scale=1080:1920:flags=lanczos")
+        chain.append("crop=608:ih,scale=1080:1920:flags=lanczos,setsar=1")
         cap_y, size = "h*0.72", 72
     else:
         # 2.39:1 letterbox for the cinema look.

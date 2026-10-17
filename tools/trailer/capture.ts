@@ -329,10 +329,16 @@ export async function capture(g: Game, shots: Shot[] = SHOTS, receiver = "http:/
   g.renderer.setAnimationLoop(null);
   g.pause = () => {};
   g.settings.dynamicResolution = false;
-  g.renderer.setPixelRatio(1);
-  g.renderer.setSize(1920, 1080, false);
-  g.camera.aspect = 16 / 9;
-  g.camera.updateProjectionMatrix();
+  const size = () => {
+    g.renderer.setPixelRatio(1);
+    g.renderer.setSize(1920, 1080, false);
+    g.camera.aspect = 16 / 9;
+    g.camera.updateProjectionMatrix();
+  };
+  size();
+  // The page's resize handler would shrink the canvas mid-shot; capture-phase listeners run first.
+  const holdSize = (e: Event) => { e.stopImmediatePropagation(); size(); };
+  window.addEventListener("resize", holdSize, true);
   document.getElementById("hud")!.style.visibility = "hidden";
   let shotCamera: Shot["camera"] | undefined;
   let shotTime = 0;
@@ -352,6 +358,7 @@ export async function capture(g: Game, shots: Shot[] = SHOTS, receiver = "http:/
   let clock = (g.last || performance.now()) + 1000;
   const step = () => g.frame((clock += 1000 / FPS));
   const written: Record<string, number> = {};
+  const inFlight: Promise<unknown>[] = [];
   for (const shot of shots) {
     shotCamera = shot.camera;
     shotTime = 0;
@@ -368,11 +375,19 @@ export async function capture(g: Game, shots: Shot[] = SHOTS, receiver = "http:/
       shot.update?.(g, shotTime);
       step();
       if (i % every) continue;
-      const blob: Blob = await new Promise((r) => g.renderer.domElement.toBlob(r, "image/jpeg", 0.92));
-      await fetch(`${receiver}/${shot.name}/${i}`, { method: "POST", body: blob });
+      // toBlob snapshots the canvas now and encodes in the background: keep a few in flight.
+      const name = `${receiver}/${shot.name}/${i}`;
+      inFlight.push(
+        new Promise<Blob | null>((r) => g.renderer.domElement.toBlob(r, "image/jpeg", 0.92)).then((blob) =>
+          fetch(name, { method: "POST", body: blob }),
+        ),
+      );
       written[shot.name]++;
+      if (inFlight.length >= 8) await inFlight.shift();
     }
   }
+  await Promise.all(inFlight);
   shotCamera = undefined;
+  window.removeEventListener("resize", holdSize, true);
   return written;
 }
