@@ -6,7 +6,7 @@ import { animate, createTimeline, engine } from "animejs";
 import { World } from "./world/World";
 import { heightAt, renderedHeightAt, SEED } from "./world/terrain";
 import { Flight, neutral, overRunway, runwayAt } from "./flight";
-import { HAVEN } from "./world/bases";
+import { BLACKRIDGE, HAVEN } from "./world/bases";
 import { toWorld } from "./world/baseLayout";
 import { Mission, landmarks, routes, type RouteId } from "./missions";
 import { FlightAudio } from "./audio";
@@ -154,6 +154,8 @@ class Game {
     preload: "none",
     volume: 0,
   });
+  /** War: last phase, wingmen and wave call announced on the radio. */
+  private warRadio = { phase: 0, wingmen: 2, waveCalled: false };
   private radio = { milestone: 0, kills: 0, damaged: false, threat: false, spiked: false, terrainCue: 0 };
   private lastLock = false;
   /** Radio call held until wheels-up: the brief only makes sense once airborne. */
@@ -172,6 +174,7 @@ class Game {
   private mouseAim = new T.Vector2();
   private steeringDirection = new T.Vector3();
   private leadPoint = new T.Vector3();
+  private hudBomb = new T.Vector3();
   private cameraReady = false;
   private toastAnimation?: ReturnType<typeof createTimeline>;
   private ringGroup = new T.Group();
@@ -220,6 +223,7 @@ class Game {
     this.combat.onTargetDestroyed = (id) => {
       this.world.airbase.destroy(id);
       this.world.crowds.strike(id);
+      if (this.combat.active === "war") this.comms.say("warBombHit", 0.6);
     };
     this.world.crowds.load(this.gltf).catch(() => {});
     this.physicsReady = import("./physics/CollisionWorld")
@@ -250,7 +254,7 @@ class Game {
       this.hud.announce("MACH 1", "THROUGH THE SOUND BARRIER", this.time);
       if (this.state === "flight") this.comms.say("machOne", 1.4);
     };
-    this.comms.onSubtitle = (text) => this.subtitle(text);
+    this.comms.onSubtitle = (text, speaker) => this.subtitle(text, speaker);
     this.flight.onTouchdown = (sink) => {
       this.hud.announce("TOUCHDOWN", `SINK ${sink.toFixed(1)} M/S · Z BRAKES`, this.time);
       if (this.state === "flight") this.comms.say("welcomeHome", 0.8);
@@ -1047,6 +1051,13 @@ class Game {
     if (this.combat.active && (this.combat.status.threat || this.combat.warning.samLaunch))
       return [this.inputActions.bindings.flare.slice(3), "release flares, then turn hard"];
     if (this.radio.spiked) return ["GO LOW", "stay under 100 m in the valleys to break the radar lock"];
+    if (this.combat.active === "war" && this.liftedOffAt >= 0 && !f.onGround) {
+      const phase = this.combat.warPhase;
+      if (phase === 1)
+        return ["STAY LOW", `fly through ingress marker ${this.combat.waypoint + 1} of 3 under 450 m`];
+      if (phase === 2 && this.combat.status.bombs > 0)
+        return [this.inputActions.bindings.bomb.slice(3), "release a bomb when the BOMB circle sits on the target"];
+    }
     if (f.onGround) {
       if (this.liftedOffAt < 0) {
         if (f.speed >= f.rotateSpeed) return ["W", "pull back to take off"];
@@ -1230,6 +1241,7 @@ class Game {
             missile: this.inputActions.active("missile"),
             target: this.inputActions.active("target"),
             flare: this.inputActions.active("flare"),
+            bomb: this.inputActions.active("bomb"),
           },
           {
             groundHeight: (x, z) => Math.max(0, renderedHeightAt(x, z)),
@@ -1649,7 +1661,8 @@ class Game {
         } else if (event.entityId !== -1) this.hitUntil = this.time + 0.18;
       } else if (event.type === "complete" || event.type === "failed") {
         this.world.crowds.react(event.type === "complete" ? "success" : "failure");
-        if (event.type === "complete") this.comms.say("clear", 0.8);
+        if (this.combat.active === "war") this.comms.say(event.type === "complete" ? "warComplete" : "warFailed", 0.8);
+        else if (event.type === "complete") this.comms.say("clear", 0.8);
         else if (this.combat.status.result === "Transport lost") this.comms.say("escortLost", 0.8);
         this.toast(
           this.combat.status.result || this.combat.status.objective,
@@ -1758,6 +1771,17 @@ class Game {
     const enemy = this.combat.active
       ? this.combat.enemies.find((e) => e.id === status.targetId && e.health > 0)
       : undefined;
+    // Bomb pipper while bombs remain over the strike area (war phase 3 or a strike sortie).
+    let ccip: T.Vector3 | undefined;
+    if (
+      status.bombs > 0 &&
+      !this.flight.onGround &&
+      (this.combat.active === "strike" || (this.combat.active === "war" && this.combat.warPhase === 2)) &&
+      Math.hypot(this.flight.position.x - BLACKRIDGE.runway.x, this.flight.position.z - BLACKRIDGE.runway.z) < 6000 &&
+      this.combat.bombImpact(this.flight, this.hudBomb)
+    )
+      ccip = this.hudBomb.sub(this.world.origin);
+    const marker = this.combat.warMarker;
     let lead: T.Vector3 | undefined;
     if (enemy) {
       const aim = this.combat.getGunAimPoint(this.flight, this.leadPoint, {
@@ -1808,13 +1832,20 @@ class Game {
           }
         : undefined,
       lead,
+      ccip,
       waypoint: gate
         ? {
             position: this.hudGate.copy(gate).sub(this.world.origin),
             label: "WPT",
             distance: gate.distanceTo(this.flight.position),
           }
-        : undefined,
+        : marker
+          ? {
+              position: this.hudGate.copy(marker).sub(this.world.origin),
+              label: `IP ${this.combat.waypoint + 1}`,
+              distance: marker.distanceTo(this.flight.position),
+            }
+          : undefined,
     });
   }
   private updateObjective() {
@@ -1907,6 +1938,22 @@ class Game {
     el("target-follow").setAttribute("aria-pressed", String(this.targetFollow));
     el("combat-hints").textContent =
       `Left click / ${b.gun.slice(3)} gun · right click / ${b.missile.slice(3)} missile · ${b.target.slice(3)} target · ${b.flare.slice(3)} flare${this.inputActions.connected ? " · GAMEPAD" : ""}`;
+    if (this.combat.active === "war" && this.state === "flight") {
+      const w = this.warRadio;
+      if (!w.waveCalled && this.liftedOffAt >= 0 && this.time - this.liftedOffAt > 9) {
+        w.waveCalled = true;
+        this.comms.say("warWave");
+      }
+      if (this.combat.warPhase !== w.phase) {
+        w.phase = this.combat.warPhase;
+        this.comms.say(w.phase === 1 ? "warIngress" : w.phase === 2 ? "warBombs" : "warCounter", 0.8);
+      }
+      // Viper flight joins three seconds after takeoff; count losses only once it has.
+      if (this.liftedOffAt >= 0 && this.time - this.liftedOffAt > 5) {
+        if (status.wingmen < w.wingmen) this.comms.say("warWingmanDown", 1);
+        w.wingmen = status.wingmen;
+      }
+    }
     if (status.threat && !this.radio.threat && this.state === "flight")
       this.comms.say(status.samLaunch ? "samLaunch" : "missile");
     this.radio.threat = status.threat;
@@ -1952,12 +1999,13 @@ class Game {
     const canvas = el<HTMLCanvasElement>("map"),
       ctx = canvas.getContext("2d")!,
       size = 216,
-      range = 12000,
+      range = this.combat.active === "war" ? 20000 : 12000,
       centerX = Math.round(this.flight.position.x / 500) * 500,
       centerZ = Math.round(this.flight.position.z / 500) * 500,
-      key = `${centerX},${centerZ}`;
+      key = `${centerX},${centerZ},${range}`;
     if (key !== this.mapCell) {
       this.mapCell = key;
+      el("map-scale").textContent = `${range / 1000} KM`;
       const context = this.mapTerrain.getContext("2d")!,
         image = context.createImageData(108, 108);
       for (let y = 0; y < 108; y++)
@@ -2021,6 +2069,20 @@ class Game {
         ctx.arc(p[0], p[1], 3, 0, Math.PI * 2);
         ctx.fill();
       }
+    const marker = this.combat.warMarker;
+    if (marker) {
+      const m = point(marker.x, marker.z);
+      ctx.strokeStyle = "#d8f37a";
+      ctx.beginPath();
+      ctx.arc(m[0], m[1], 6, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.fillStyle = "#84e2ed";
+    for (const w of this.combat.wingmen) {
+      if (!w.active) continue;
+      const q = point(w.position.x, w.position.z);
+      ctx.fillRect(q[0] - 2.5, q[1] - 2.5, 5, 5);
+    }
     const gate = this.mission.gate();
     if (gate && !this.mission.completed) {
       const p = point(gate.x, gate.z);
@@ -2106,6 +2168,7 @@ class Game {
     this.radio.kills = 0;
     this.radio.damaged = false;
     this.radio.threat = this.radio.spiked = false;
+    this.warRadio = { phase: 0, wingmen: 2, waveCalled: false };
   }
   /** Calls driven by flight state rather than discrete events. */
   private radioCalls() {
@@ -2146,9 +2209,12 @@ class Game {
     }
     return false;
   }
-  private subtitle(text: string | null) {
+  private subtitle(text: string | null, speaker = "HAVEN CONTROL") {
     const box = el("comms");
-    if (text) el("comms-text").textContent = text;
+    if (text) {
+      el("comms-text").textContent = text;
+      el("comms-speaker").textContent = speaker;
+    }
     box.classList.toggle("on", !!text);
   }
   private toast(message: string, type = "FLIGHT LOG") {

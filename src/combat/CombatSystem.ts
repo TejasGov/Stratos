@@ -31,7 +31,7 @@ import {
 } from "./AirDefense";
 
 export type { Missile, MissileProfile } from "./Missiles";
-export type CombatMission = "intercept" | "escort" | "strike";
+export type CombatMission = "intercept" | "escort" | "strike" | "war";
 export type AIState =
   "patrol" | "approach" | "attack" | "extend" | "evade" | "recover";
 export interface CombatPlayer extends EngineHeat {
@@ -51,12 +51,14 @@ export interface CombatInput {
   missile: boolean;
   target: boolean;
   flare: boolean;
+  bomb?: boolean;
 }
 export const combatNeutral: CombatInput = {
   gun: false,
   missile: false,
   target: false,
   flare: false,
+  bomb: false,
 };
 export interface CombatQuery {
   /** True if opaque world geometry blocks the segment, in global coordinates. */
@@ -101,6 +103,13 @@ export interface Tracer {
   hostile: boolean;
   owner: number;
   age: number;
+  position: Vector3;
+  previous: Vector3;
+  velocity: Vector3;
+}
+/** Free-fall bomb: ballistic from the jet's velocity, bursting on the ground. */
+export interface Bomb {
+  active: boolean;
   position: Vector3;
   previous: Vector3;
   velocity: Vector3;
@@ -176,12 +185,25 @@ export const AIM_ASSIST = {
 export const SORTIE = {
   /** Seconds after the wheels leave the runway before anyone shoots. */
   grace: 6,
-  limits: { intercept: 300, escort: 360, strike: 420, patrol: 240 },
+  limits: { intercept: 300, escort: 360, strike: 420, war: 900, patrol: 240 },
   /** Transport rolls this long after the player is airborne. */
   transportDelay: 4,
   /** Strike guards scramble when the player is this close to Blackridge, or tracked. */
   strikeAlert: 9000,
 } as const;
+
+/** War: low-level ingress up the eastern channel, under the spine battery's radar. */
+export const WAR_WAYPOINTS = [
+  { x: 1200, z: -4000 },
+  { x: 1400, z: -5600 },
+  { x: 1300, z: -7100 },
+] as const;
+/** An ingress marker counts when passed this close and this low (m above ground). */
+export const WAR_GATE = { radius: 500, ceiling: 450 };
+/** Viper flight: the player's two AI wingmen. */
+export const WINGMAN_IDS = [-2, -3] as const;
+/** Bomb burst: full damage at the centre, nothing beyond the radius. */
+export const BOMB = { damage: 190, radius: 110, ammo: { war: 8, strike: 6 } };
 
 /** Escort corridor: up the west coast, brushing the edge of the northern defences. */
 export const ESCORT_ROUTE = [
@@ -316,6 +338,27 @@ export class CombatSystem implements DefenseHost {
   private missileAmmo = 12;
   private gunAmmo = 600;
   private flares = 12;
+  /** War: Viper flight, ingress progress and the counterattack. */
+  wingmen: CombatEntity[] = [];
+  warPhase = 0;
+  waypoint = 0;
+  private wingJoinAt = Infinity;
+  private wingJoined = false;
+  readonly bombs: Bomb[] = Array.from({ length: 8 }, () => ({
+    active: false,
+    position: new Vector3(),
+    previous: new Vector3(),
+    velocity: new Vector3(),
+  }));
+  bombAmmo = 0;
+  private bombCooldown = 0;
+  private marker = new Vector3();
+  /** War: the ingress marker to fly through next (global, 160 m above the ground), or null. */
+  get warMarker() {
+    if (this.active !== "war" || this.warPhase !== 1) return null;
+    const wp = WAR_WAYPOINTS[this.waypoint];
+    return this.marker.set(wp.x, this.ground(wp.x, wp.z, this.query) + 160, wp.z);
+  }
   private kills = 0;
   private bonus = 0;
   private gunCooldown = 0;
@@ -449,6 +492,8 @@ export class CombatSystem implements DefenseHost {
       result: this.result,
       targetHealth: target ? target.health / target.maxHealth : 0,
       allyHealth: this.ally?.health ?? null,
+      bombs: this.bombAmmo,
+      wingmen: this.wingmen.filter((w) => w.active).length,
     };
   }
   private random() {
@@ -573,6 +618,7 @@ export class CombatSystem implements DefenseHost {
     if (this.patrol) this.startPatrol(type, player);
     else if (type === "intercept") this.startIntercept();
     else if (type === "escort") this.startEscort();
+    else if (type === "war") this.startWar();
     else this.startStrike();
     this.airDefense.start();
     this.selected = this.defaultTarget();
@@ -627,6 +673,33 @@ export class CombatSystem implements DefenseHost {
     this.objective = "ESCORT · Cover the transport up the west corridor";
   }
   private startStrike() {
+    this.addStrikeTargets();
+    this.bombAmmo = BOMB.ammo.strike;
+    const home = new Vector3(BLACKRIDGE.runway.x, 1900, BLACKRIDGE.runway.z + 600);
+    this.fighter(1, -900, 1900, -7800, -Math.PI / 2, home);
+    this.fighter(2, 900, 2100, -8900, Math.PI / 2, home);
+    this.objective = "STRIKE · Destroy the Blackridge radar · fuel and shelters are bonus";
+  }
+  /** Operation Iron Dawn: intercept, low ingress, bombing, then hold the counterattack. */
+  private startWar() {
+    const home = new Vector3(BLACKRIDGE.runway.x, 2600, BLACKRIDGE.runway.z + 900);
+    this.fighter(1, -700, 2600, -9200, Math.PI, home);
+    this.fighter(2, 0, 2900, -9600, Math.PI, home);
+    this.fighter(3, 700, 3100, -9300, Math.PI, home);
+    this.addStrikeTargets();
+    this.bombAmmo = BOMB.ammo.war;
+    WINGMAN_IDS.forEach((id, i) => {
+      const w = this.entity(id, `VIPER ${i + 2}`, "ally", new Vector3(), "fighter");
+      w.active = false;
+      w.health = w.maxHealth = 110;
+      w.radius = 12;
+      w.speed = 170;
+      w.cooldown = 8 + i * 4;
+      this.wingmen.push(w);
+    });
+    this.objective = "WAR · 1/4 · Clear the bandits with Viper flight";
+  }
+  private addStrikeTargets() {
     for (const t of BLACKRIDGE_TARGETS) {
       const radar = t.kind === "radar";
       const e = this.entity(
@@ -641,10 +714,6 @@ export class CombatSystem implements DefenseHost {
       e.radius = radar ? 30 : 38;
       this.enemies.push(e);
     }
-    const home = new Vector3(BLACKRIDGE.runway.x, 1900, BLACKRIDGE.runway.z + 600);
-    this.fighter(1, -900, 1900, -7800, -Math.PI / 2, home);
-    this.fighter(2, 900, 2100, -8900, Math.PI / 2, home);
-    this.objective = "STRIKE · Destroy the Blackridge radar · fuel and shelters are bonus";
   }
   /** B-key patrol: the original intercept laid out ahead of the airborne jet. */
   private startPatrol(type: CombatMission, player: CombatPlayer) {
@@ -741,7 +810,7 @@ export class CombatSystem implements DefenseHost {
   }
   /** Fighters first; the strike radar when that is the objective. */
   private defaultTarget() {
-    if (this.active === "strike") {
+    if (this.active === "strike" || (this.active === "war" && this.warPhase >= 2)) {
       const radar = this.enemies.find(
         (e) => e.active && e.kind === "ground" && e.tag === "radar",
       );
@@ -780,6 +849,11 @@ export class CombatSystem implements DefenseHost {
     for (const m of this.missiles) m.active = false;
     for (const t of this.tracers) t.active = false;
     for (const f of this.flareDecoys) f.active = false;
+    for (const b of this.bombs) b.active = false;
+    this.wingmen.length = 0;
+    this.warPhase = this.waypoint = this.bombAmmo = this.bombCooldown = 0;
+    this.wingJoinAt = Infinity;
+    this.wingJoined = false;
   }
   stop() {
     this.reset();
@@ -822,6 +896,7 @@ export class CombatSystem implements DefenseHost {
     this.gunCooldown -= dt;
     this.missileCooldown -= dt;
     this.flareCooldown -= dt;
+    this.bombCooldown -= dt;
     if (player.crashed) {
       this.playerHealth = 0;
       this.finish(false, player.position, "Aircraft lost");
@@ -842,6 +917,8 @@ export class CombatSystem implements DefenseHost {
     for (const e of this.enemies)
       if (e.active && e.kind === "air") this.updateEnemy(e, dt, player, query);
     if (this.ally?.active) this.updateAlly(dt, query);
+    for (let i = 0; i < this.wingmen.length; i++)
+      if (this.wingmen[i].active) this.updateWingman(this.wingmen[i], i, dt, player, query);
     const sensed = this.sensed;
     sensed.position = player.position;
     sensed.velocity = player.velocity;
@@ -890,12 +967,32 @@ export class CombatSystem implements DefenseHost {
       this.releaseFlare(player);
       this.event("flare", player.position, PLAYER_ID, true);
     }
+    if (
+      input.bomb &&
+      !this.previousInput.bomb &&
+      this.bombAmmo > 0 &&
+      this.bombCooldown <= 0 &&
+      !player.onGround
+    ) {
+      const b = this.bombs.find((x) => !x.active);
+      if (b) {
+        b.active = true;
+        b.position.copy(player.position).y -= 2.5;
+        b.previous.copy(b.position);
+        b.velocity.copy(player.velocity);
+        this.bombAmmo--;
+        this.bombCooldown = 0.35;
+      }
+    }
     this.updateFlares(dt);
+    this.updateBombs(dt, player, query);
     this.updateProjectiles(dt, player, query);
+    if (this.active === "war") this.updateWar(player, query);
     this.previousInput.gun = input.gun;
     this.previousInput.missile = input.missile;
     this.previousInput.target = input.target;
     this.previousInput.flare = input.flare;
+    this.previousInput.bomb = !!input.bomb;
     this.updateWarning(player);
     if (this.playerHealth <= 0)
       this.finish(false, player.position, "Aircraft destroyed");
@@ -924,6 +1021,16 @@ export class CombatSystem implements DefenseHost {
       !this.enemies.some((e) => e.active && e.kind === "air")
     )
       this.finish(true, player.position, "Airspace clear");
+    else if (
+      this.active === "war" &&
+      this.warPhase === 3 &&
+      !this.enemies.some((e) => e.active && e.kind === "air")
+    )
+      this.finish(
+        true,
+        player.position,
+        `Blackridge destroyed · Viper flight ${this.wingmen.filter((w) => w.active).length} / 2 home`,
+      );
     else if (this.elapsed > this.limit)
       this.finish(false, player.position, "Sortie time expired");
   }
@@ -935,7 +1042,7 @@ export class CombatSystem implements DefenseHost {
       this.allyReleaseAt = this.takeoffAt + SORTIE.transportDelay;
     for (const e of this.enemies) {
       if (e.kind !== "air" || e.releaseAt !== Infinity) continue;
-      if (this.active === "intercept") e.releaseAt = free + (e.id - 1) * 2;
+      if (this.active === "intercept" || this.active === "war") e.releaseAt = free + (e.id - 1) * 2;
       else if (this.active === "escort") {
         // Scramble once the transport is on its way up the corridor.
         if (this.escortLeg >= 2) e.releaseAt = this.elapsed + (e.id - 1) * 3;
@@ -1003,7 +1110,9 @@ export class CombatSystem implements DefenseHost {
     const victim =
       this.active === "escort" && e.id % 2 && this.ally?.active
         ? this.ally
-        : player;
+        : this.active === "war"
+          ? this.warVictim(e, player)
+          : player;
     const range = e.position.distanceTo(victim.position);
     this.forward.copy(this.localForward).applyQuaternion(e.quaternion);
     const ahead = this.aim
@@ -1102,7 +1211,7 @@ export class CombatSystem implements DefenseHost {
           this.direction,
           true,
           e.id,
-          victim === this.ally ? ALLY_ID : PLAYER_ID,
+          victim === this.ally ? ALLY_ID : victim === player ? PLAYER_ID : (victim as CombatEntity).id,
           MISSILES.aam,
           e.speed + MISSILES.aam.launchSpeed * 0.5,
         );
@@ -1118,6 +1227,157 @@ export class CombatSystem implements DefenseHost {
       this.desired.copy(victim.position).sub(e.position).normalize();
       if (this.desired.dot(this.direction) > 0.98)
         this.fireGun(e.position, this.direction, true, e.id);
+    }
+  }
+  /** War: bandits split their attention between the leader and Viper flight. */
+  private warVictim(e: CombatEntity, player: CombatPlayer): CombatEntity | CombatPlayer {
+    const w = this.wingmen[e.id % 3 === 1 ? 0 : 1];
+    return e.id % 3 !== 0 && w?.active ? w : player;
+  }
+  /** Viper flight: formation on the leader, breaking off to chase the nearest bandit. */
+  private updateWingman(
+    w: CombatEntity,
+    slot: number,
+    dt: number,
+    player: CombatPlayer,
+    query?: CombatQuery,
+  ) {
+    w.previous.copy(w.position);
+    w.stateTime += dt;
+    w.cooldown -= dt;
+    this.forward.copy(this.localForward).applyQuaternion(w.quaternion);
+    let target: CombatEntity | null = null,
+      best = 9000;
+    for (const e of this.enemies)
+      if (e.active && e.kind === "air" && this.elapsed >= e.releaseAt) {
+        const d = e.position.distanceTo(w.position);
+        if (d < best) {
+          best = d;
+          target = e;
+        }
+      }
+    let speed: number;
+    if (target) {
+      this.desired
+        .copy(target.position)
+        .addScaledVector(target.velocity, Math.min(2, best / 650))
+        .sub(w.position)
+        .normalize();
+      speed = 185;
+    } else {
+      // Echelon slot 70 m behind and 60 m out to either side of the leader.
+      this.direction.copy(this.localForward).applyQuaternion(player.quaternion);
+      this.aim.set(-this.direction.z, 0, this.direction.x).normalize();
+      this.desired
+        .copy(player.position)
+        .addScaledVector(this.aim, slot ? 60 : -60)
+        .addScaledVector(this.direction, -70 - slot * 40)
+        .sub(w.position);
+      const gap = this.desired.length();
+      this.desired.normalize();
+      speed = MathUtils.clamp(player.speed + (gap - 30) * 0.4, 110, 320);
+    }
+    const ahead = this.aim.copy(w.position).addScaledVector(this.forward, w.speed * 2.5);
+    const clearance =
+      Math.max(this.ground(w.position.x, w.position.z, query), this.ground(ahead.x, ahead.z, query)) +
+      (target ? 220 : 90);
+    if (w.position.y < clearance) this.desired.setY(Math.max(this.desired.y, 0.6)).normalize();
+    w.speed = MathUtils.damp(w.speed, speed, 1.2, dt);
+    this.targetQuaternion.setFromUnitVectors(this.localForward, this.desired);
+    w.quaternion.rotateTowards(this.targetQuaternion, dt * 0.7);
+    this.direction.copy(this.localForward).applyQuaternion(w.quaternion);
+    w.velocity.lerp(this.aim.copy(this.direction).multiplyScalar(w.speed), 1 - Math.exp(-3 * dt));
+    w.position.addScaledVector(w.velocity, dt);
+    const floor = this.ground(w.position.x, w.position.z, query) + 25;
+    if (w.position.y < floor) w.position.y = floor;
+    if (!target || !this.weaponsFree) return;
+    this.desired.copy(target.position).sub(w.position).normalize();
+    const aligned = this.desired.dot(this.direction);
+    if (w.cooldown <= 0 && best < 2600 && aligned > 0.93 && !this.blocked(w.position, target.position, query)) {
+      this.fireMissile(w.position, this.direction, false, w.id, target.id, MISSILES.aam, w.speed + 120);
+      w.cooldown = 16 + this.random() * 8;
+    } else if (best < 800 && aligned > 0.985 && w.stateTime % 0.9 < dt)
+      this.fireGun(w.position, this.direction, false, w.id);
+  }
+  /** War phases: wingmen join after takeoff; each phase unlocks the next. */
+  private updateWar(player: CombatPlayer, query?: CombatQuery) {
+    if (this.takeoffAt >= 0 && this.wingJoinAt === Infinity) this.wingJoinAt = this.elapsed + 3;
+    if (!this.wingJoined && this.elapsed >= this.wingJoinAt) {
+      this.wingJoined = true;
+      this.direction.copy(this.localForward).applyQuaternion(player.quaternion);
+      this.aim.set(-this.direction.z, 0, this.direction.x).normalize();
+      this.wingmen.forEach((w, i) => {
+        w.active = true;
+        w.position
+          .copy(player.position)
+          .addScaledVector(this.aim, i ? 60 : -60)
+          .addScaledVector(this.direction, -120 - i * 40);
+        w.previous.copy(w.position);
+        w.quaternion.copy(player.quaternion);
+        w.velocity.copy(player.velocity);
+        w.speed = Math.max(140, player.speed);
+      });
+    }
+    const bandits = this.enemies.some((e) => e.active && e.kind === "air");
+    if (this.warPhase === 0 && this.weaponsFree && !bandits) {
+      this.warPhase = 1;
+      this.objective = `WAR · 2/4 · Fly low through the valley markers (0/${WAR_WAYPOINTS.length}) · under ${WAR_GATE.ceiling} m`;
+    } else if (this.warPhase === 1) {
+      const wp = WAR_WAYPOINTS[this.waypoint];
+      const agl = player.position.y - this.ground(wp.x, wp.z, query);
+      if (Math.hypot(player.position.x - wp.x, player.position.z - wp.z) < WAR_GATE.radius && agl < WAR_GATE.ceiling) {
+        this.waypoint++;
+        this.objective = `WAR · 2/4 · Fly low through the valley markers (${this.waypoint}/${WAR_WAYPOINTS.length}) · under ${WAR_GATE.ceiling} m`;
+        if (this.waypoint >= WAR_WAYPOINTS.length) {
+          this.warPhase = 2;
+          this.objective = "WAR · 3/4 · Bomb the Blackridge radar, fuel farm and shelters";
+          this.selected = this.enemies.find((e) => e.active && e.tag === "radar")?.id ?? this.selected;
+        }
+      }
+    } else if (this.warPhase === 2 && !this.enemies.some((e) => e.active && e.role === "target")) {
+      this.warPhase = 3;
+      this.objective = "WAR · 4/4 · Hold the line against the counterattack";
+      // The counterattack comes from far beyond Blackridge, out over the northern sea.
+      const home = new Vector3(BLACKRIDGE.runway.x, 2800, BLACKRIDGE.runway.z);
+      for (let i = 0; i < 4; i++) {
+        const e = this.fighter(7 + i, -1500 + i * 1000, 3000 + i * 150, -15500 - (i % 2) * 600, Math.PI, home);
+        e.releaseAt = this.elapsed + i * 1.5;
+      }
+    }
+  }
+  /** Where a bomb released now would land (ground point); false when no ballistic solution. */
+  bombImpact(player: CombatPlayer, out: Vector3, query?: CombatQuery) {
+    out.copy(player.position);
+    this.desired.copy(player.velocity);
+    for (let t = 0; t < 40; t += 0.05) {
+      this.desired.y -= 9.81 * 0.05;
+      this.desired.multiplyScalar(1 - 0.02 * 0.05);
+      out.addScaledVector(this.desired, 0.05);
+      const g = this.ground(out.x, out.z, query);
+      if (out.y <= g) {
+        out.y = g;
+        return true;
+      }
+    }
+    return false;
+  }
+  private updateBombs(dt: number, player: CombatPlayer, query?: CombatQuery) {
+    for (const b of this.bombs) {
+      if (!b.active) continue;
+      b.previous.copy(b.position);
+      b.velocity.y -= 9.81 * dt;
+      b.velocity.multiplyScalar(1 - 0.02 * dt);
+      b.position.addScaledVector(b.velocity, dt);
+      const g = this.ground(b.position.x, b.position.z, query);
+      if (b.position.y > g) continue;
+      b.position.y = g;
+      b.active = false;
+      this.event("explosion", b.position, PLAYER_ID, true, 2.2, { kind: "ground" });
+      for (const e of this.enemies) {
+        if (!e.active || e.kind !== "ground") continue;
+        const d = e.position.distanceTo(b.position);
+        if (d < BOMB.radius) this.damageEntity(e, BOMB.damage * (1 - d / BOMB.radius), player, "missile");
+      }
     }
   }
   private updateAlly(dt: number, query?: CombatQuery) {
@@ -1352,7 +1612,8 @@ export class CombatSystem implements DefenseHost {
           ? player
           : m.targetId === ALLY_ID
             ? this.ally
-            : this.enemies.find((e) => e.id === m.targetId && e.active);
+            : (this.enemies.find((e) => e.id === m.targetId && e.active) ??
+              this.wingmen.find((w) => w.id === m.targetId && w.active));
       let source = NO_SOURCE;
       if (victim && victim !== player && !m.hostile && (victim as CombatEntity).active) {
         // The player's missiles fly the datalink onto the locked target.
@@ -1394,6 +1655,12 @@ export class CombatSystem implements DefenseHost {
           )) <= fuze + 4
         )
           hit = this.ally;
+        else
+          for (const w of this.wingmen)
+            if (w.active && (miss = sweptClosest(m.previous, m.position, w.previous, w.position)) <= fuze + 2) {
+              hit = w;
+              break;
+            }
       } else hit = this.hitEnemy(m.previous, m.position, 6);
       const blocked = this.blocked(m.previous, m.position, query);
       if (hit && (!blocked || this.isGround(hit))) {
@@ -1448,6 +1715,8 @@ export class CombatSystem implements DefenseHost {
       sweptMovingHit(from, to, ally.previous, ally.position, radius + 4)
     )
       return ally;
+    for (const w of this.wingmen)
+      if (w.active && sweptMovingHit(from, to, w.previous, w.position, radius + 2)) return w;
   }
   private damageEntity(
     target: CombatEntity | CombatPlayer,

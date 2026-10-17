@@ -120,6 +120,60 @@ export const LINES = {
     priority: 4,
     cooldown: 20,
   },
+  war: {
+    text: "Kestrel, this is Citadel. Operation Iron Dawn is go. Viper Two and Viper Three will join your wing once you're airborne. Clear the skies, slip in low through the valleys, and put your bombs on Blackridge. Good hunting.",
+    priority: 1,
+    cooldown: 30,
+    speaker: "CITADEL",
+  },
+  warWave: {
+    text: "Bandits, three of them, coming down from the north. Viper flight, you are weapons free. Engage.",
+    priority: 3,
+    cooldown: 30,
+    speaker: "CITADEL",
+  },
+  warIngress: {
+    text: "Sky's clear. Well flown. Now get down low, Kestrel, and thread the valley markers. Stay under their radar.",
+    priority: 2,
+    cooldown: 30,
+    speaker: "CITADEL",
+  },
+  warBombs: {
+    text: "Blackridge is dead ahead. You are cleared hot. Bombs on the radar first, then the fuel farm and the shelters.",
+    priority: 2,
+    cooldown: 30,
+    speaker: "CITADEL",
+  },
+  warBombHit: {
+    text: "Direct hit, Kestrel! Lovely bombing.",
+    priority: 2,
+    cooldown: 6,
+    speaker: "CITADEL",
+  },
+  warWingmanDown: {
+    text: "We've lost a Viper. Keep your head in the fight, Kestrel. We grieve later.",
+    priority: 3,
+    cooldown: 10,
+    speaker: "CITADEL",
+  },
+  warCounter: {
+    text: "Counterattack. Four bandits from the north, and they want their base back. Viper flight, hold the line.",
+    priority: 3,
+    cooldown: 30,
+    speaker: "CITADEL",
+  },
+  warComplete: {
+    text: "Splendid work, Kestrel. Blackridge is burning and the sky is ours. Bring Viper flight home.",
+    priority: 2,
+    cooldown: 30,
+    speaker: "CITADEL",
+  },
+  warFailed: {
+    text: "That's enough, Kestrel. The operation's a write-off. Disengage and come home. That's an order.",
+    priority: 5,
+    cooldown: 30,
+    speaker: "CITADEL",
+  },
   welcomeHome: {
     text: "Wheels down, Kestrel. Welcome home. The ground crew wanted their jet back in one piece… and for once, it is.",
     priority: 2,
@@ -141,7 +195,7 @@ export class Comms {
   /** 0..1: how rough the link is (static and dropouts); storms make it worse. */
   interference = 0.25;
   /** Shows (text) or hides (null) the subtitle. */
-  onSubtitle?: (text: string | null) => void;
+  onSubtitle?: (text: string | null, speaker?: string) => void;
   private buffers = new Map<Line, Promise<AudioBuffer | undefined>>();
   private current?: {
     line: Line;
@@ -265,7 +319,8 @@ export class Comms {
     source.start(start);
     this.current = { line, source, link };
     this.audio.duck = 1;
-    this.onSubtitle?.(LINES[line].text);
+    const spec: { text: string; speaker?: string } = LINES[line];
+    this.onSubtitle?.(spec.text, spec.speaker ?? "HAVEN CONTROL");
     source.onended = () => {
       source.disconnect();
       if (this.current?.source !== source) return;

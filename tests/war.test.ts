@@ -1,0 +1,161 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { Quaternion, Vector3 } from "three";
+import {
+  BOMB,
+  CombatSystem,
+  WAR_WAYPOINTS,
+  WINGMAN_IDS,
+  combatNeutral,
+  type CombatPlayer,
+} from "../src/combat/CombatSystem.ts";
+import { MISSILES, launchMissile } from "../src/combat/Missiles.ts";
+import { BLACKRIDGE_TARGETS, HAVEN, runwayThreshold } from "../src/world/bases.ts";
+
+const flat = () => 0;
+const flatWorld = { groundHeight: flat, blocked: () => false };
+// Strike installations stand on the real terrain, so the sortie runs over it too.
+const world = { blocked: () => false };
+const player = (x = 0, y = 2500, z = 0, onGround = false): CombatPlayer => ({
+  position: new Vector3(x, y, z),
+  previous: new Vector3(x, y, z),
+  velocity: new Vector3(0, 0, -200),
+  quaternion: new Quaternion(),
+  speed: 200,
+  crashed: false,
+  onGround,
+  engines: [{ output: 0.8, failed: false }],
+  boost: false,
+  throttle: 0.8,
+});
+const run = (system: CombatSystem, p: CombatPlayer, seconds: number, input = combatNeutral, query: object = world) => {
+  for (let i = 0; i < Math.round(seconds * 60); i++) {
+    p.previous.copy(p.position);
+    system.step(1 / 60, p, input, query);
+  }
+};
+const clearAir = (system: CombatSystem) => {
+  for (const e of system.enemies) if (e.kind === "air") e.active = false;
+};
+/** Puts the jet 120 m over (x, z) with SAM sites silenced, so only the mission logic runs. */
+const hover = (system: CombatSystem, p: CombatPlayer, x: number, z: number) => {
+  for (const e of system.enemies) if (e.role.startsWith("sam")) e.active = false;
+  p.position.set(x, 120, z);
+  p.previous.copy(p.position);
+  p.velocity.set(0, 0, 0);
+};
+
+test("war: Viper flight joins after takeoff and every phase unlocks the next", () => {
+  const start = runwayThreshold(HAVEN.runway);
+  const p = player(start.x, start.elevation + 2, start.z, true);
+  const system = new CombatSystem();
+  system.start("war", p);
+  assert.equal(system.wingmen.length, 2);
+  assert.ok(system.wingmen.every((w) => !w.active), "wingmen wait for the leader");
+  assert.equal(system.bombAmmo, BOMB.ammo.war);
+  run(system, p, 2);
+  assert.ok(system.wingmen.every((w) => !w.active));
+  // Wheels up: Viper flight forms on the leader three seconds later.
+  p.onGround = false;
+  p.position.y = 600;
+  run(system, p, 4);
+  assert.ok(system.wingmen.every((w) => w.active && w.position.distanceTo(p.position) < 400));
+  assert.equal(system.warPhase, 0);
+  // Phase 1 → 2: the first wave is down once weapons are free.
+  run(system, p, 4);
+  clearAir(system);
+  run(system, p, 0.2);
+  assert.equal(system.warPhase, 1);
+  assert.ok(system.warMarker);
+  // A marker passed too high does not count; low ones do.
+  p.position.set(WAR_WAYPOINTS[0].x, 900, WAR_WAYPOINTS[0].z);
+  run(system, p, 0.2);
+  assert.equal(system.waypoint, 0);
+  for (const wp of WAR_WAYPOINTS) {
+    hover(system, p, wp.x, wp.z);
+    run(system, p, 0.2);
+  }
+  assert.equal(system.warPhase, 2);
+  assert.equal(system.warMarker, null);
+  // Phase 3: bombs released over each target destroy the installations.
+  for (const t of BLACKRIDGE_TARGETS) {
+    const target = system.enemies.find((e) => e.tag === t.id)!;
+    for (let drop = 0; drop < 2 && target.active; drop++) {
+      hover(system, p, t.x, t.z);
+      p.position.y = 300;
+      run(system, p, 0.1, { ...combatNeutral, bomb: true });
+      run(system, p, 9);
+    }
+    assert.equal(target.active, false, `${t.id} destroyed`);
+  }
+  assert.equal(system.warPhase, 3);
+  // Phase 4: the counterattack comes from far north; clearing it wins the war.
+  const wave = system.enemies.filter((e) => e.kind === "air" && e.active);
+  assert.equal(wave.length, 4);
+  assert.ok(wave.every((e) => e.position.z < -14000));
+  clearAir(system);
+  run(system, p, 0.2);
+  assert.equal(system.completed, true);
+  assert.match(system.status.result, /Blackridge destroyed/);
+});
+
+test("war: the bomb pipper predicts where a released bomb lands", () => {
+  const p = player(0, 1000, 0);
+  p.velocity.set(0, 0, -200);
+  const system = new CombatSystem();
+  system.start("war", p);
+  const predicted = new Vector3();
+  assert.ok(system.bombImpact(p, predicted, flatWorld));
+  // Free fall from 1 km takes about 14 s; at 200 m/s with light drag that is about 2.6 km ahead.
+  assert.ok(predicted.z < -2450 && predicted.z > -2900, `${predicted.z}`);
+  run(system, p, 0.05, { ...combatNeutral, bomb: true }, flatWorld);
+  const bomb = system.bombs.find((b) => b.active)!;
+  const released = bomb.position.clone();
+  const fly = bomb.velocity.clone();
+  p.velocity.set(0, 0, 0);
+  for (let i = 0; i < 60 * 20 && bomb.active; i++) system.step(1 / 60, p, combatNeutral, flatWorld);
+  assert.equal(bomb.active, false);
+  // It lands where the pipper said (within a few metres of the prediction from the release point).
+  const check = player(released.x, released.y, released.z);
+  check.velocity.copy(fly);
+  system.bombImpact(check, predicted, flatWorld);
+  assert.ok(predicted.distanceTo(bomb.position) < 10, `${predicted.distanceTo(bomb.position)}`);
+});
+
+test("war: wingmen fight bandits and can be shot down", () => {
+  const p = player(0, 3000, 0);
+  const system = new CombatSystem();
+  system.start("war", p);
+  run(system, p, 4);
+  const [viper] = system.wingmen;
+  assert.ok(viper.active);
+  // A released bandit 2 km ahead of Viper 2 draws its fire.
+  const bandit = system.enemies.find((e) => e.kind === "air")!;
+  bandit.releaseAt = 0;
+  run(system, p, 4);
+  bandit.position.copy(viper.position).add(new Vector3(0, 0, -1800));
+  viper.quaternion.identity();
+  viper.cooldown = 0;
+  const before = system.missiles.filter((m) => m.active && m.owner === viper.id).length;
+  run(system, p, 1);
+  const shots = system.missiles.filter((m) => m.owner === viper.id).length;
+  assert.ok(shots > before || system.tracers.some((t) => t.owner === viper.id), "Viper 2 engages");
+  // A hostile missile aimed at Viper 3 can kill it.
+  const viper3 = system.wingmen[1];
+  viper3.health = 10;
+  const from = viper3.position.clone().add(new Vector3(0, 0, 150));
+  const missile = launchMissile(
+    system.missiles[20],
+    MISSILES.aam,
+    from,
+    viper3.position.clone().sub(from).normalize(),
+    true,
+    1,
+    WINGMAN_IDS[1],
+    600,
+  );
+  assert.ok(missile.active);
+  run(system, p, 1);
+  assert.equal(viper3.active, false);
+  assert.equal(system.status.wingmen, 1);
+});

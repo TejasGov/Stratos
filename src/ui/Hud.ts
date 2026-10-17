@@ -42,6 +42,8 @@ export interface HudFrame {
   target?: HudTarget;
   lead?: T.Vector3;
   waypoint?: { position: T.Vector3; label: string; distance: number };
+  /** Where a bomb released now would land (camera-local). */
+  ccip?: T.Vector3;
   /** Radar/threat warning receiver (combat only). */
   rwr?: HudRwr;
 }
@@ -382,6 +384,22 @@ export class Hud {
         const d = 12 * s;
         this.line([p.x, p.y - d, p.x + d, p.y, p.x, p.y + d, p.x - d, p.y, p.x, p.y - d], GREEN, 2);
         this.text(`${frame.waypoint.label} ${(frame.waypoint.distance / 1000).toFixed(1)}`, p.x, p.y + 26 * s, 13);
+      }
+    }
+    if (frame.ccip) {
+      // Continuously computed impact point: a pipper on the ground with a fall line to it.
+      const p = this.projectPoint(cam, frame.ccip, this.a);
+      if (p) {
+        const ctx = this.ctx;
+        ctx.strokeStyle = GREEN;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 14 * s, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.fillStyle = GREEN;
+        ctx.fillRect(p.x - 2 * s, p.y - 2 * s, 4 * s, 4 * s);
+        this.line([bore.x, bore.y, p.x, p.y - 14 * s], GREEN, 1);
+        this.text("BOMB", p.x, p.y + 30 * s, 12);
       }
     }
     const target = frame.target;
