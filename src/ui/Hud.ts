@@ -28,6 +28,24 @@ export interface HudFrame {
   target?: HudTarget;
   lead?: T.Vector3;
   waypoint?: { position: T.Vector3; label: string; distance: number };
+  /** Radar/threat warning receiver (combat only). */
+  rwr?: HudRwr;
+}
+
+/** Threats around the jet; bearings are clockwise from the nose (rad). */
+export interface HudRwr {
+  contacts: readonly {
+    bearing: number;
+    range: number;
+    /** 1 search, 2 track, 3 launch. */
+    level: 1 | 2 | 3;
+    source: "shorad" | "mrsam" | "fighter";
+  }[];
+  count: number;
+  samLaunch: boolean;
+  missile: boolean;
+  missileBearing: number;
+  missileRange: number;
 }
 
 const GREEN = "#a6ffc8";
@@ -221,6 +239,7 @@ export class Hud {
     this.drawHeading(frame);
     this.drawTapes(frame, bore);
     this.drawCombat(frame, bore, radius);
+    if (frame.rwr) this.drawRwr(frame, frame.rwr, bore, radius);
     this.drawMilestones(frame);
 
     // Mode line and warnings.
@@ -359,6 +378,90 @@ export class Hud {
         ctx.fillRect(q.x - 1.5 * s, q.y - 1.5 * s, 3 * s, 3 * s);
       }
     }
+  }
+  /**
+   * Warning-receiver scope beside the speed tape: search emitters on the outer
+   * ring, trackers in the middle, launches inside; the nearest inbound missile
+   * is also cued on the HUD circle.
+   */
+  private drawRwr(frame: HudFrame, rwr: HudRwr, bore: T.Vector2, radius: number) {
+    const s = this.s;
+    const ctx = this.ctx;
+    const r = 66 * s;
+    const cx = bore.x - radius - 120 * s,
+      cy = bore.y + radius * 0.62;
+    const blink = Math.sin(frame.time * 14) > -0.3;
+    ctx.save();
+    ctx.globalAlpha = 0.85;
+    for (const ring of [1, 0.55]) {
+      ctx.beginPath();
+      ctx.arc(cx, cy, r * ring, 0, Math.PI * 2);
+      ctx.lineWidth = (ring === 1 ? 1.6 : 1) * s;
+      ctx.strokeStyle = "rgba(166,255,200,0.55)";
+      ctx.stroke();
+    }
+    // Nose tick and own-ship cross.
+    this.line([cx, cy - r - 6 * s, cx, cy - r + 4 * s], GREEN, 1.6);
+    this.line([cx - 5 * s, cy, cx + 5 * s, cy], GREEN, 1.2);
+    this.line([cx, cy - 5 * s, cx, cy + 5 * s], GREEN, 1.2);
+    ctx.restore();
+    let level = 0;
+    for (let i = 0; i < rwr.count; i++) {
+      const c = rwr.contacts[i];
+      level = Math.max(level, c.level);
+      const rr = r * (c.level === 1 ? 0.84 : c.level === 2 ? 0.6 : 0.34);
+      const x = cx + Math.sin(c.bearing) * rr,
+        y = cy - Math.cos(c.bearing) * rr;
+      const color = c.level === 1 ? GREEN : c.level === 2 ? AMBER : RED;
+      if (c.level === 3 && !blink) continue;
+      this.text(c.source === "mrsam" ? "M" : c.source === "shorad" ? "S" : "F", x, y, c.level === 1 ? 13 : 16, color);
+      if (c.level >= 2) {
+        ctx.beginPath();
+        if (c.level === 3) ctx.arc(x, y, 11 * s, 0, Math.PI * 2);
+        else {
+          ctx.moveTo(x, y - 12 * s);
+          ctx.lineTo(x + 11 * s, y + 8 * s);
+          ctx.lineTo(x - 11 * s, y + 8 * s);
+          ctx.closePath();
+        }
+        ctx.lineWidth = 1.6 * s;
+        ctx.strokeStyle = color;
+        ctx.stroke();
+      }
+    }
+    if (rwr.missile) {
+      // Arrowhead on the scope rim pointing in at the jet, with range in km.
+      const b = rwr.missileBearing;
+      const sx = Math.sin(b),
+        cy2 = -Math.cos(b);
+      const tipX = cx + sx * (r - 2 * s),
+        tipY = cy + cy2 * (r - 2 * s);
+      const baseX = cx + sx * (r + 14 * s),
+        baseY = cy + cy2 * (r + 14 * s);
+      const px = -cy2 * 7 * s,
+        py = sx * 7 * s;
+      this.line([baseX + px, baseY + py, tipX, tipY, baseX - px, baseY - py], RED, 2.4);
+      this.text((rwr.missileRange / 1000).toFixed(1), cx + sx * (r + 30 * s), cy + cy2 * (r + 30 * s), 13, RED);
+      // Same cue on the HUD circle, where the eyes are.
+      const hx = bore.x + sx * radius * 0.97,
+        hy = bore.y + cy2 * radius * 0.97;
+      if (blink) {
+        this.line([hx - sx * 18 * s + px, hy - cy2 * 18 * s + py, hx, hy, hx - sx * 18 * s - px, hy - cy2 * 18 * s - py], RED, 2.6);
+        this.text("MSL", hx - sx * 34 * s, hy - cy2 * 34 * s, 13, RED);
+      }
+    }
+    const alert = rwr.samLaunch
+      ? "SAM LAUNCH"
+      : rwr.missile
+        ? "MISSILE"
+        : level >= 2
+          ? "TRACK"
+          : level === 1
+            ? "SEARCH"
+            : "RWR";
+    const urgent = rwr.samLaunch || rwr.missile;
+    if (!urgent || blink)
+      this.text(alert, cx, cy - r - 22 * s, urgent ? 18 : 13, urgent ? RED : level >= 2 ? AMBER : GREEN);
   }
   private drawMilestones(frame: HudFrame) {
     for (const [altitude, title, sub] of [

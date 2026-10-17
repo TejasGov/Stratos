@@ -40,6 +40,8 @@ export class FlightAudio {
   private gun?: { source: AudioBufferSourceNode; gain: GainNode };
   private lastGun = 0;
   private radioInput?: AudioNode;
+  /** Warning-receiver tracking tone: one oscillator kept alive, gated by gain. */
+  private rwrTrack?: { oscillator: OscillatorNode; gain: GainNode };
   /** 0..1: lowers the engine and wind beds while someone is talking. */
   duck = 0;
   enabled = true;
@@ -133,6 +135,88 @@ export class FlightAudio {
         gain.disconnect();
       };
     }
+  }
+  /** Warning receiver: a search radar's beam sweeping over the jet — one short ping. */
+  rwrPing() {
+    if (!this.ready()) return;
+    const ctx = this.context!;
+    const now = ctx.currentTime;
+    const tone = ctx.createOscillator();
+    tone.type = "sine";
+    tone.frequency.setValueAtTime(1350, now);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(0.03, now + 0.008);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.11);
+    tone.connect(gain);
+    gain.connect(this.master!);
+    tone.start(now);
+    tone.stop(now + 0.12);
+    tone.onended = () => {
+      tone.disconnect();
+      gain.disconnect();
+    };
+  }
+  /** Warning receiver: steady tone while any threat holds a track on the jet. */
+  rwrTone(on: boolean) {
+    if (!this.context || !this.master) return;
+    const ctx = this.context;
+    const t = ctx.currentTime;
+    if (!this.rwrTrack) {
+      if (!on || !this.ready()) return;
+      const oscillator = ctx.createOscillator();
+      oscillator.type = "square";
+      oscillator.frequency.value = 980;
+      const filter = ctx.createBiquadFilter();
+      filter.type = "lowpass";
+      filter.frequency.value = 2400;
+      const gain = ctx.createGain();
+      gain.gain.value = 0;
+      oscillator.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.master);
+      oscillator.start();
+      this.rwrTrack = { oscillator, gain };
+    }
+    this.rwrTrack.gain.gain.setTargetAtTime(
+      on && this.enabled ? 0.012 : 0,
+      t,
+      0.03,
+    );
+  }
+  /** Warning receiver: rapid warble on a missile launch at the jet. */
+  rwrLaunch() {
+    if (!this.ready()) return;
+    const ctx = this.context!;
+    const now = ctx.currentTime;
+    const duration = 1.1;
+    const tone = ctx.createOscillator();
+    tone.type = "triangle";
+    tone.frequency.setValueAtTime(1150, now);
+    // A fast LFO sweeps the pitch: the unmistakable launch warble.
+    const lfo = ctx.createOscillator();
+    lfo.frequency.value = 16;
+    const depth = ctx.createGain();
+    depth.gain.value = 320;
+    lfo.connect(depth);
+    depth.connect(tone.frequency);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(0.05, now + 0.02);
+    gain.gain.setValueAtTime(0.05, now + duration - 0.1);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+    tone.connect(gain);
+    gain.connect(this.master!);
+    tone.start(now);
+    lfo.start(now);
+    tone.stop(now + duration);
+    lfo.stop(now + duration);
+    tone.onended = () => {
+      tone.disconnect();
+      lfo.disconnect();
+      depth.disconnect();
+      gain.disconnect();
+    };
   }
   /** Ground-proximity alarm: the jet's own two rising "whoops". */
   terrainAlarm() {

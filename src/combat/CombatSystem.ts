@@ -1,17 +1,50 @@
 import { MathUtils, Quaternion, Vector3 } from "three";
 import { heightAt, renderedHeightAt } from "../world/terrain";
 import { landmarks } from "../missions";
+import {
+  BLACKRIDGE,
+  BLACKRIDGE_TARGETS,
+  HAVEN,
+  runwayThreshold,
+} from "../world/bases";
+import {
+  FLARE_BURN,
+  FLARE_HEAT,
+  MISSILES,
+  NO_SOURCE,
+  advanceMissile,
+  createMissile,
+  engineHeat,
+  flareDecoyChance,
+  launchMissile,
+  missileSpent,
+  seekerRange,
+  type EngineHeat,
+  type Missile,
+  type MissileProfile,
+} from "./Missiles";
+import {
+  AirDefense,
+  type DefenseHost,
+  type SamUnit,
+  type SensorTarget,
+} from "./AirDefense";
 
+export type { Missile, MissileProfile } from "./Missiles";
 export type CombatMission = "intercept" | "escort" | "strike";
 export type AIState =
   "patrol" | "approach" | "attack" | "extend" | "evade" | "recover";
-export interface CombatPlayer {
+export interface CombatPlayer extends EngineHeat {
   position: Vector3;
   previous: Vector3;
   velocity: Vector3;
   quaternion: Quaternion;
   speed: number;
   crashed: boolean;
+  /** Wheels on the runway: enemies hold until the jet is airborne. */
+  onGround?: boolean;
+  /** Post-stall manoeuvre (cobra): radar Doppler loses the jet. */
+  postStall?: boolean;
 }
 export interface CombatInput {
   gun: boolean;
@@ -34,6 +67,18 @@ export interface CombatEntity {
   id: number;
   name: string;
   kind: "air" | "ground" | "ally";
+  /** What the entity is, for presentation and objectives. */
+  role:
+    | "fighter"
+    | "transport"
+    | "target"
+    | "radar"
+    | "sam-launcher"
+    | "sam-radar";
+  /** Strike target id or SAM site id; empty otherwise. */
+  tag: string;
+  /** Hit radius for cannon and missiles (m). */
+  radius: number;
   position: Vector3;
   previous: Vector3;
   velocity: Vector3;
@@ -46,19 +91,10 @@ export interface CombatEntity {
   cooldown: number;
   speed: number;
   phase: number;
-}
-export interface Missile {
-  id: number;
-  active: boolean;
-  hostile: boolean;
-  owner: number;
-  targetId: number;
-  position: Vector3;
-  previous: Vector3;
-  direction: Vector3;
-  speed: number;
-  life: number;
-  guided: boolean;
+  /** Holding station before release (fighters). */
+  home: Vector3;
+  /** Combat time at which a holding fighter is released to engage (Infinity: not yet). */
+  releaseAt: number;
 }
 export interface Tracer {
   active: boolean;
@@ -69,16 +105,63 @@ export interface Tracer {
   previous: Vector3;
   velocity: Vector3;
 }
+/** Countermeasure flare: falls behind the jet and burns hot for a few seconds. */
+export interface Flare {
+  active: boolean;
+  age: number;
+  position: Vector3;
+  velocity: Vector3;
+}
 export interface CombatEvent {
   type:
-    "gun" | "missile" | "hit" | "explosion" | "flare" | "complete" | "failed";
+    | "gun"
+    | "missile"
+    | "samLaunch"
+    | "hit"
+    | "explosion"
+    | "flare"
+    | "complete"
+    | "failed";
   position: Vector3;
   entityId?: number;
   player?: boolean;
   scale?: number;
+  /** On hits: what struck (the player's jet loses an engine to missiles). */
+  weapon?: "gun" | "missile";
+  /** On explosions: an airburst or a ground impact/destroyed installation. */
+  kind?: "air" | "ground";
+  /** On launches: initial flight direction (unit). */
+  direction?: Vector3;
+}
+/** One threat on the warning receiver. Bearing is clockwise from the nose (rad). */
+export interface RwrContact {
+  bearing: number;
+  range: number;
+  /** 1 search, 2 track, 3 launch. */
+  level: 1 | 2 | 3;
+  source: "shorad" | "mrsam" | "fighter";
+}
+export interface CombatWarning {
+  contacts: RwrContact[];
+  count: number;
+  /** Highest level present (0 none). */
+  level: 0 | 1 | 2 | 3;
+  /** A ground site launched at the player within the last few seconds. */
+  samLaunch: boolean;
+  /** Guided missile inbound: nearest one's bearing (clockwise from nose) and range. */
+  missile: boolean;
+  missileBearing: number;
+  missileRange: number;
+  missileSam: boolean;
+}
+export interface StartOptions {
+  /** B-key patrol: an intercept around the current airborne position, as before. */
+  patrol?: boolean;
 }
 export const PLAYER_ID = 0,
   ALLY_ID = -1;
+const FLARE_KEY = 1000;
+const MAX_RWR = 12;
 
 export const AIM_ASSIST = {
   missileConeDegrees: 40,
@@ -88,6 +171,25 @@ export const AIM_ASSIST = {
   cannonRange: 1800,
   cannonSpeed: 1400,
 } as const;
+
+/** Sortie pacing: takeoff grace, release delays and time limits (game tuning). */
+export const SORTIE = {
+  /** Seconds after the wheels leave the runway before anyone shoots. */
+  grace: 6,
+  limits: { intercept: 300, escort: 360, strike: 420, patrol: 240 },
+  /** Transport rolls this long after the player is airborne. */
+  transportDelay: 4,
+  /** Strike guards scramble when the player is this close to Blackridge, or tracked. */
+  strikeAlert: 9000,
+} as const;
+
+/** Escort corridor: up the west coast, brushing the edge of the northern defences. */
+export const ESCORT_ROUTE = [
+  { x: -1000, z: -1500, altitude: 420 },
+  { x: -2900, z: -3300, altitude: 750 },
+  { x: -5600, z: -5600, altitude: 850 },
+  { x: -7800, z: -9400, altitude: 850 },
+] as const;
 
 /** Constant-speed projectile interception with a bounded fallback for unreachable targets. */
 export function predictInterceptPosition(
@@ -127,13 +229,12 @@ export function predictInterceptPosition(
     );
 }
 
-/** Relative motion gives the closest approach of two swept objects in one step. */
-export function sweptMovingHit(
+/** Closest approach of two objects swept linearly over one step. */
+export function sweptClosest(
   from: Vector3,
   to: Vector3,
   targetFrom: Vector3,
   targetTo: Vector3,
-  radius: number,
 ) {
   const rx = from.x - targetFrom.x,
     ry = from.y - targetFrom.y,
@@ -145,33 +246,38 @@ export function sweptMovingHit(
   const t = length
     ? MathUtils.clamp(-(rx * dx + ry * dy + rz * dz) / length, 0, 1)
     : 0;
-  return (
-    (rx + dx * t) ** 2 + (ry + dy * t) ** 2 + (rz + dz * t) ** 2 <=
-    radius * radius
-  );
+  return Math.sqrt((rx + dx * t) ** 2 + (ry + dy * t) ** 2 + (rz + dz * t) ** 2);
+}
+
+/** Relative motion gives the closest approach of two swept objects in one step. */
+export function sweptMovingHit(
+  from: Vector3,
+  to: Vector3,
+  targetFrom: Vector3,
+  targetTo: Vector3,
+  radius: number,
+) {
+  return sweptClosest(from, to, targetFrom, targetTo) <= radius;
 }
 
 /** Bounded single-player combat. All entities remain in global space until CombatView upload. */
-export class CombatSystem {
+export class CombatSystem implements DefenseHost {
   active: CombatMission | null = null;
+  /** Current sortie is the free-flight B-key patrol rather than a briefed mission. */
+  patrol = false;
   completed = false;
   failed = false;
   playerHealth = 100;
   enemies: CombatEntity[] = [];
   ally: CombatEntity | null = null;
-  readonly missiles: Missile[] = Array.from({ length: 16 }, (_, i) => ({
-    id: 100 + i,
-    active: false,
-    hostile: false,
-    owner: 0,
-    targetId: 0,
-    position: new Vector3(),
-    previous: new Vector3(),
-    direction: new Vector3(0, 0, -1),
-    speed: 430,
-    life: 0,
-    guided: true,
-  }));
+  /** Radar cross-section of the player's airframe (set by the parent). */
+  rcs = 1;
+  /** World hook: a strike installation was destroyed (BLACKRIDGE_TARGETS id). */
+  onTargetDestroyed?: (id: string) => void;
+  readonly airDefense = new AirDefense(this);
+  readonly missiles: Missile[] = Array.from({ length: 24 }, (_, i) =>
+    createMissile(100 + i),
+  );
   readonly tracers: Tracer[] = Array.from({ length: 96 }, () => ({
     active: false,
     hostile: false,
@@ -181,40 +287,84 @@ export class CombatSystem {
     previous: new Vector3(),
     velocity: new Vector3(),
   }));
+  readonly flareDecoys: Flare[] = Array.from({ length: 8 }, () => ({
+    active: false,
+    age: 0,
+    position: new Vector3(),
+    velocity: new Vector3(),
+  }));
+  readonly warning: CombatWarning = {
+    contacts: Array.from({ length: MAX_RWR }, () => ({
+      bearing: 0,
+      range: 0,
+      level: 1,
+      source: "shorad",
+    })),
+    count: 0,
+    level: 0,
+    samLaunch: false,
+    missile: false,
+    missileBearing: 0,
+    missileRange: 0,
+    missileSam: false,
+  };
+  /** Time the player first left the ground this sortie (-1: still on it). */
+  takeoffAt = -1;
+  elapsed = 0;
   private selected = 0;
   private lockProgress = 0;
-  private elapsed = 0;
   private missileAmmo = 12;
   private gunAmmo = 600;
   private flares = 12;
   private kills = 0;
+  private bonus = 0;
   private gunCooldown = 0;
   private missileCooldown = 0;
   private missileRequest = false;
   private missileRequestUntil = 0;
   private flareCooldown = 0;
+  private flareIndex = 0;
   private previousInput = { ...combatNeutral };
   private events: CombatEvent[] = [];
   private range = 0;
   private threatening = false;
+  private threatUntil = 0;
+  private samLaunchAt = -Infinity;
   private result = "";
   private objective = "";
   private lockReason = "No target";
   private escortGoal = new Vector3();
+  private escortLeg = 0;
+  private allyReleaseAt = Infinity;
+  private grace: number = SORTIE.grace;
+  private limit: number = SORTIE.limits.intercept;
   private desired = new Vector3();
   private direction = new Vector3();
   private forward = new Vector3();
   private point = new Vector3();
+  private sightPoint = new Vector3();
   private aim = new Vector3();
   private assistDirection = new Vector3();
   private assistForward = new Vector3();
   private targetQuaternion = new Quaternion();
-  private readonly identityQuaternion = new Quaternion();
   private readonly localForward = new Vector3(0, 0, -1);
-  private seed = 8391;
+  /** Deterministic RNG state; reset per sortie (tests may vary it). */
+  seed = 8391;
+  private query?: CombatQuery;
+  private player?: CombatPlayer;
+  private readonly sensed: SensorTarget = {
+    position: new Vector3(),
+    velocity: new Vector3(),
+  };
+  private readonly groundAt = (x: number, z: number) =>
+    this.ground(x, z, this.query);
 
   get target() {
     return this.enemies.find((e) => e.id === this.selected && e.active) ?? null;
+  }
+  /** Airborne and past the takeoff grace: enemies may shoot. */
+  get weaponsFree() {
+    return this.takeoffAt >= 0 && this.elapsed >= this.takeoffAt + this.grace;
   }
   /** Selected target lead for optional bounded flight pursuit. No orientation mutation. */
   getAimDirection(
@@ -229,7 +379,7 @@ export class CombatSystem {
       !this.active ||
       this.completed ||
       this.failed ||
-      this.blocked(player.position, target.position, query)
+      this.sightBlocked(player.position, target, query)
     )
       return null;
     out
@@ -256,7 +406,7 @@ export class CombatSystem {
     if (
       this.assistDirection.multiplyScalar(1 / range).dot(this.assistForward) <
         cone ||
-      this.blocked(player.position, target.position, query)
+      this.sightBlocked(player.position, target, query)
     )
       return null;
     predictInterceptPosition(
@@ -289,6 +439,7 @@ export class CombatSystem {
         this.missileCooldown <= 0 &&
         this.missileAmmo > 0,
       threat: this.threatening,
+      samLaunch: this.warning.samLaunch,
       missiles: this.missileAmmo,
       gunAmmo: this.gunAmmo,
       flares: this.flares,
@@ -310,6 +461,7 @@ export class CombatSystem {
     entityId?: number,
     player = false,
     scale = 1,
+    extra?: Pick<CombatEvent, "weapon" | "kind" | "direction">,
   ) {
     if (this.events.length < 128)
       this.events.push({
@@ -318,6 +470,9 @@ export class CombatSystem {
         entityId,
         player,
         scale,
+        ...(extra?.weapon && { weapon: extra.weapon }),
+        ...(extra?.kind && { kind: extra.kind }),
+        ...(extra?.direction && { direction: extra.direction.clone() }),
       });
   }
   drainEvents() {
@@ -325,7 +480,7 @@ export class CombatSystem {
     this.events = [];
     return out;
   }
-  private ground(x: number, z: number, query?: CombatQuery) {
+  ground(x: number, z: number, query?: CombatQuery) {
     return (
       query?.groundHeight?.(x, z) ??
       Math.max(0, heightAt(x, z), renderedHeightAt(x, z))
@@ -341,17 +496,40 @@ export class CombatSystem {
     }
     return false;
   }
+  /** Line of sight to an entity; ground installations count as seen up to their own structure. */
+  private sightBlocked(from: Vector3, e: CombatEntity, query?: CombatQuery) {
+    if (e.kind !== "ground") return this.blocked(from, e.position, query);
+    this.sightPoint.copy(from).sub(e.position);
+    const d = this.sightPoint.length();
+    this.sightPoint
+      .multiplyScalar(Math.min(e.radius, d * 0.5) / Math.max(d, 1))
+      .add(e.position);
+    // The aim point sits on the installation's near face, above its foundations.
+    this.sightPoint.y = Math.max(
+      this.sightPoint.y,
+      this.ground(this.sightPoint.x, this.sightPoint.z, query) + 3,
+    );
+    return this.blocked(from, this.sightPoint, query);
+  }
   private entity(
     id: number,
     name: string,
     kind: CombatEntity["kind"],
     position: Vector3,
+    role: CombatEntity["role"] = kind === "ally"
+      ? "transport"
+      : kind === "ground"
+        ? "radar"
+        : "fighter",
   ): CombatEntity {
     const health = kind === "ground" ? 160 : kind === "ally" ? 120 : 90;
     return {
       id,
       name,
       kind,
+      role,
+      tag: "",
+      radius: kind === "ground" ? 25 : kind === "ally" ? 16 : 12,
       position: position.clone(),
       previous: position.clone(),
       velocity: new Vector3(),
@@ -364,11 +542,112 @@ export class CombatSystem {
       cooldown: 9 + id * 1.4,
       speed: kind === "ally" ? 125 : 155,
       phase: id * 1.73,
+      home: position.clone(),
+      releaseAt: 0,
     };
   }
-  start(type: CombatMission, player: CombatPlayer) {
+  addGroundEntity(
+    name: string,
+    role: CombatEntity["role"],
+    tag: string,
+    position: Vector3,
+    health: number,
+    radius: number,
+  ) {
+    const id = 10 + this.enemies.filter((e) => e.id >= 10).length;
+    const e = this.entity(id, name, "ground", position, role);
+    e.tag = tag;
+    e.health = e.maxHealth = health;
+    e.radius = radius;
+    this.enemies.push(e);
+    return e;
+  }
+  start(type: CombatMission, player: CombatPlayer, options: StartOptions = {}) {
     this.reset();
     this.active = type;
+    this.patrol = !!options.patrol;
+    this.player = player;
+    this.grace = this.patrol ? 0 : SORTIE.grace;
+    this.limit = this.patrol ? SORTIE.limits.patrol : SORTIE.limits[type];
+    if (!player.onGround) this.takeoffAt = 0;
+    if (this.patrol) this.startPatrol(type, player);
+    else if (type === "intercept") this.startIntercept();
+    else if (type === "escort") this.startEscort();
+    else this.startStrike();
+    this.airDefense.start();
+    this.selected = this.defaultTarget();
+  }
+  /** Fighters at Blackridge, holding until the player is airborne. */
+  private fighter(id: number, x: number, y: number, z: number, heading: number, home: Vector3) {
+    const e = this.entity(
+      id,
+      `BANDIT ${String(id).padStart(2, "0")}`,
+      "air",
+      new Vector3(x, Math.max(y, this.ground(x, z) + 450), z),
+    );
+    e.home.copy(home);
+    e.releaseAt = Infinity;
+    e.speed = 140 + id * 6;
+    e.cooldown = 6 + id * 2;
+    e.quaternion.setFromAxisAngle(this.forward.set(0, 1, 0), heading);
+    e.velocity
+      .copy(this.localForward)
+      .applyQuaternion(e.quaternion)
+      .multiplyScalar(e.speed);
+    this.enemies.push(e);
+    return e;
+  }
+  private startIntercept() {
+    const home = new Vector3(BLACKRIDGE.runway.x, 2800, BLACKRIDGE.runway.z + 900);
+    // Inbound toward Haven from the north once released.
+    this.fighter(1, -600, 2600, -9000, Math.PI, home);
+    this.fighter(2, 0, 2900, -9500, Math.PI, home);
+    this.fighter(3, 650, 3200, -9100, Math.PI, home);
+    this.objective = "INTERCEPT · Bandits inbound from Blackridge · clear the skies";
+  }
+  private startEscort() {
+    const start = runwayThreshold(HAVEN.runway);
+    // Parked on the apron beside the threshold until the runway is clear.
+    const parked = new Vector3(
+      start.x + 110,
+      this.ground(start.x + 110, start.z) + 4,
+      start.z,
+    );
+    this.ally = this.entity(ALLY_ID, "HAVEN TRANSPORT", "ally", parked);
+    this.ally.quaternion.setFromAxisAngle(this.forward.set(0, 1, 0), start.heading);
+    this.ally.speed = 0;
+    this.ally.state = "patrol";
+    this.escortLeg = 0;
+    const goal = ESCORT_ROUTE[ESCORT_ROUTE.length - 1];
+    this.escortGoal.set(goal.x, goal.altitude, goal.z);
+    const home = new Vector3(BLACKRIDGE.runway.x - 1500, 2400, BLACKRIDGE.runway.z + 1500);
+    this.fighter(1, -1200, 2300, -8600, Math.PI * 0.75, home);
+    this.fighter(2, -500, 2600, -9200, Math.PI * 0.75, home);
+    this.fighter(3, 200, 2900, -8800, Math.PI * 0.75, home);
+    this.objective = "ESCORT · Cover the transport up the west corridor";
+  }
+  private startStrike() {
+    for (const t of BLACKRIDGE_TARGETS) {
+      const radar = t.kind === "radar";
+      const e = this.entity(
+        radar ? 4 : t.kind === "fuel" ? 5 : 6,
+        t.name.toUpperCase(),
+        "ground",
+        new Vector3(t.x, this.ground(t.x, t.z) + 12, t.z),
+        "target",
+      );
+      e.tag = t.id;
+      e.health = e.maxHealth = radar ? 150 : t.kind === "fuel" ? 90 : 140;
+      e.radius = radar ? 30 : 38;
+      this.enemies.push(e);
+    }
+    const home = new Vector3(BLACKRIDGE.runway.x, 1900, BLACKRIDGE.runway.z + 600);
+    this.fighter(1, -900, 1900, -7800, -Math.PI / 2, home);
+    this.fighter(2, 900, 2100, -8900, Math.PI / 2, home);
+    this.objective = "STRIKE · Destroy the Blackridge radar · fuel and shelters are bonus";
+  }
+  /** B-key patrol: the original intercept laid out ahead of the airborne jet. */
+  private startPatrol(type: CombatMission, player: CombatPlayer) {
     this.forward.copy(this.localForward).applyQuaternion(player.quaternion);
     this.forward.y = 0;
     if (this.forward.lengthSq() < 0.01) this.forward.set(0, 0, -1);
@@ -428,6 +707,7 @@ export class CombatSystem {
         player.position.clone().addScaledVector(this.forward, 400),
       );
       this.ally.quaternion.copy(player.quaternion);
+      this.ally.state = "approach";
       this.escortGoal
         .copy(this.ally.position)
         .addScaledVector(this.forward, 5400);
@@ -435,6 +715,8 @@ export class CombatSystem {
         this.escortGoal.y,
         this.ground(this.escortGoal.x, this.escortGoal.z) + 650,
       );
+      this.escortLeg = ESCORT_ROUTE.length;
+      this.allyReleaseAt = 0;
       this.objective = "ESCORT · Protect Haven transport to the safe corridor";
     }
     if (type === "strike") {
@@ -453,18 +735,29 @@ export class CombatSystem {
       this.enemies.push(
         this.entity(4, `${coast.name.toUpperCase()} RADAR`, "ground", position),
       );
+      this.enemies[this.enemies.length - 1].tag = "radar";
       this.objective = `STRIKE · Destroy radar at ${coast.name}`;
     }
-    this.selected = type === "strike" ? 4 : 1;
+  }
+  /** Fighters first; the strike radar when that is the objective. */
+  private defaultTarget() {
+    if (this.active === "strike") {
+      const radar = this.enemies.find(
+        (e) => e.active && e.kind === "ground" && e.tag === "radar",
+      );
+      if (radar) return radar.id;
+    }
+    return this.enemies.find((e) => e.active && e.kind === "air")?.id ?? 0;
   }
   reset() {
     this.active = null;
+    this.patrol = false;
     this.completed = this.failed = false;
     this.playerHealth = 100;
     this.enemies.length = 0;
     this.ally = null;
     this.selected = 0;
-    this.lockProgress = this.elapsed = this.kills = this.range = 0;
+    this.lockProgress = this.elapsed = this.kills = this.bonus = this.range = 0;
     this.missileAmmo = this.flares = 12;
     this.gunAmmo = 600;
     this.gunCooldown = this.missileCooldown = this.flareCooldown = 0;
@@ -475,15 +768,30 @@ export class CombatSystem {
     this.objective = this.result = "";
     this.lockReason = "No target";
     this.threatening = false;
+    this.threatUntil = 0;
+    this.samLaunchAt = -Infinity;
+    this.takeoffAt = -1;
+    this.allyReleaseAt = Infinity;
+    this.escortLeg = 0;
     this.seed = 8391;
+    this.airDefense.clear();
+    this.warning.count = this.warning.level = 0;
+    this.warning.samLaunch = this.warning.missile = false;
     for (const m of this.missiles) m.active = false;
     for (const t of this.tracers) t.active = false;
+    for (const f of this.flareDecoys) f.active = false;
   }
   stop() {
     this.reset();
   }
   cycleTarget() {
-    const available = this.enemies.filter((e) => e.active);
+    // Air threats first, then ground installations within reach of the jet.
+    const p = this.player?.position;
+    const available = this.enemies.filter(
+      (e) =>
+        e.active &&
+        (e.kind === "air" || !p || e.position.distanceTo(p) < 15000),
+    );
     if (!available.length) {
       this.selected = 0;
       this.lockProgress = 0;
@@ -508,6 +816,8 @@ export class CombatSystem {
     )
       return;
     dt = Math.min(dt, 0.1);
+    this.query = query;
+    this.player = player;
     this.elapsed += dt;
     this.gunCooldown -= dt;
     this.missileCooldown -= dt;
@@ -517,6 +827,8 @@ export class CombatSystem {
       this.finish(false, player.position, "Aircraft lost");
       return;
     }
+    if (this.takeoffAt < 0 && !player.onGround) this.takeoffAt = this.elapsed;
+    this.updateReleases(player);
     if (input.target && !this.previousInput.target) this.cycleTarget();
     if (input.missile && !this.previousInput.missile) {
       this.missileRequest = true;
@@ -524,12 +836,21 @@ export class CombatSystem {
     }
     if (this.elapsed > this.missileRequestUntil) this.missileRequest = false;
     if (!this.target) {
-      this.selected = this.enemies.find((e) => e.active)?.id ?? 0;
+      this.selected = this.defaultTarget();
       this.lockProgress = 0;
     }
     for (const e of this.enemies)
       if (e.active && e.kind === "air") this.updateEnemy(e, dt, player, query);
     if (this.ally?.active) this.updateAlly(dt, query);
+    const sensed = this.sensed;
+    sensed.position = player.position;
+    sensed.velocity = player.velocity;
+    sensed.rcs = this.rcs;
+    sensed.postStall = player.postStall;
+    sensed.engines = player.engines;
+    sensed.boost = player.boost;
+    sensed.throttle = player.throttle;
+    this.airDefense.step(dt, sensed, this.groundAt);
     this.updateLock(dt, player, query);
     if (input.gun && this.gunCooldown <= 0 && this.gunAmmo > 0) {
       this.forward.copy(this.localForward).applyQuaternion(player.quaternion);
@@ -550,6 +871,7 @@ export class CombatSystem {
           false,
           PLAYER_ID,
           this.target.id,
+          MISSILES.player,
         )
       ) {
         this.missileAmmo--;
@@ -565,32 +887,16 @@ export class CombatSystem {
     ) {
       this.flares--;
       this.flareCooldown = 1.5;
+      this.releaseFlare(player);
       this.event("flare", player.position, PLAYER_ID, true);
-      // Explicit forgiving arcade window: nearby player-seeking missiles lose guidance.
-      for (const m of this.missiles)
-        if (
-          m.active &&
-          m.hostile &&
-          m.targetId === PLAYER_ID &&
-          m.position.distanceTo(player.position) < 1400
-        ) {
-          m.guided = false;
-          m.direction.y -= 0.2;
-          m.direction.normalize();
-        }
     }
+    this.updateFlares(dt);
     this.updateProjectiles(dt, player, query);
     this.previousInput.gun = input.gun;
     this.previousInput.missile = input.missile;
     this.previousInput.target = input.target;
     this.previousInput.flare = input.flare;
-    this.threatening = this.missiles.some(
-      (m) =>
-        m.active &&
-        m.hostile &&
-        m.targetId === PLAYER_ID &&
-        m.position.distanceTo(player.position) < 2300,
-    );
+    this.updateWarning(player);
     if (this.playerHealth <= 0)
       this.finish(false, player.position, "Aircraft destroyed");
     else if (this.active === "escort" && this.ally && !this.ally.active)
@@ -598,18 +904,51 @@ export class CombatSystem {
     else if (
       this.active === "escort" &&
       this.ally &&
+      this.escortLeg >= ESCORT_ROUTE.length &&
       this.ally.position.distanceTo(this.escortGoal) < 180
     )
       this.finish(true, player.position, "Transport reached the safe corridor");
     else if (
       this.active === "strike" &&
-      !this.enemies.some((e) => e.kind === "ground" && e.active)
+      !this.enemies.some((e) => e.kind === "ground" && e.tag === "radar" && e.active)
     )
-      this.finish(true, player.position, "Radar destroyed");
-    else if (this.active === "intercept" && !this.enemies.some((e) => e.active))
+      this.finish(
+        true,
+        player.position,
+        this.patrol
+          ? "Radar destroyed"
+          : `Radar destroyed · bonus targets ${this.bonus} / ${BLACKRIDGE_TARGETS.length - 1}`,
+      );
+    else if (
+      this.active === "intercept" &&
+      !this.enemies.some((e) => e.active && e.kind === "air")
+    )
       this.finish(true, player.position, "Airspace clear");
-    else if (this.elapsed > 240)
+    else if (this.elapsed > this.limit)
       this.finish(false, player.position, "Sortie time expired");
+  }
+  /** Who may engage, and when: nothing shoots at a jet still on the runway. */
+  private updateReleases(player: CombatPlayer) {
+    if (this.patrol || this.takeoffAt < 0) return;
+    const free = this.takeoffAt + this.grace;
+    if (this.active === "escort" && this.allyReleaseAt === Infinity)
+      this.allyReleaseAt = this.takeoffAt + SORTIE.transportDelay;
+    for (const e of this.enemies) {
+      if (e.kind !== "air" || e.releaseAt !== Infinity) continue;
+      if (this.active === "intercept") e.releaseAt = free + (e.id - 1) * 2;
+      else if (this.active === "escort") {
+        // Scramble once the transport is on its way up the corridor.
+        if (this.escortLeg >= 2) e.releaseAt = this.elapsed + (e.id - 1) * 3;
+      } else if (
+        this.elapsed >= free &&
+        (this.airDefense.tracking ||
+          Math.hypot(
+            player.position.x - BLACKRIDGE.runway.x,
+            player.position.z - BLACKRIDGE.runway.z,
+          ) < SORTIE.strikeAlert)
+      )
+        e.releaseAt = this.elapsed + (e.id - 1) * 2;
+    }
   }
   private updateLock(dt: number, player: CombatPlayer, query?: CombatQuery) {
     const target = this.target;
@@ -629,7 +968,7 @@ export class CombatSystem {
     const occluded =
       this.range < AIM_ASSIST.missileRange &&
       inCone &&
-      this.blocked(player.position, target.position, query);
+      this.sightBlocked(player.position, target, query);
     const visible = this.range < AIM_ASSIST.missileRange && inCone && !occluded;
     this.lockProgress = MathUtils.clamp(
       this.lockProgress + dt * (visible ? 1 / AIM_ASSIST.acquireSeconds : -1.5),
@@ -660,6 +999,7 @@ export class CombatSystem {
     e.previous.copy(e.position);
     e.stateTime += dt;
     e.cooldown -= dt;
+    const holding = this.elapsed < e.releaseAt;
     const victim =
       this.active === "escort" && e.id % 2 && this.ally?.active
         ? this.ally
@@ -678,11 +1018,13 @@ export class CombatSystem {
       e.state = "recover";
       e.stateTime = 0;
     } else if (e.state === "recover" && e.position.y > clearance + 150) {
-      e.state = "approach";
+      e.state = holding ? "patrol" : "approach";
       e.stateTime = 0;
     } else if (
       e.state === "patrol" &&
-      e.stateTime > (this.active === "intercept" ? 12 : 4)
+      !holding &&
+      (!this.patrol ||
+        e.stateTime > (this.active === "intercept" ? 12 : 4))
     ) {
       e.state = "approach";
       e.stateTime = 0;
@@ -703,7 +1045,17 @@ export class CombatSystem {
       this.desired.copy(this.forward).setY(1.4).normalize();
     else if (e.state === "extend")
       this.desired.copy(this.forward).setY(0.15).normalize();
-    else if (e.state === "patrol" && this.active === "intercept")
+    else if (e.state === "patrol" && holding) {
+      // Racetrack-like orbit around the holding station.
+      this.desired.copy(e.position).sub(e.home).setY(0);
+      const d = Math.max(1, this.desired.length());
+      this.desired.multiplyScalar(1 / d);
+      this.desired
+        .set(-this.desired.z, 0, this.desired.x)
+        .addScaledVector(this.desired, MathUtils.clamp((1600 - d) / 800, -1.5, 1.5));
+      this.desired.y = MathUtils.clamp((e.home.y - e.position.y) / 900, -0.3, 0.3);
+      this.desired.normalize();
+    } else if (e.state === "patrol" && this.active === "intercept")
       this.desired.copy(this.forward);
     else if (e.state === "evade")
       this.desired
@@ -738,6 +1090,7 @@ export class CombatSystem {
       e.velocity.y = Math.max(0, e.velocity.y);
       e.state = "recover";
     }
+    if (holding || !this.weaponsFree) return;
     if (e.state === "attack" && e.cooldown <= 0 && range < 1900) {
       this.desired.copy(victim.position).sub(e.position).normalize();
       if (
@@ -750,6 +1103,8 @@ export class CombatSystem {
           true,
           e.id,
           victim === this.ally ? ALLY_ID : PLAYER_ID,
+          MISSILES.aam,
+          e.speed + MISSILES.aam.launchSpeed * 0.5,
         );
         e.cooldown = 14 + this.random() * 5;
       }
@@ -768,19 +1123,55 @@ export class CombatSystem {
   private updateAlly(dt: number, query?: CombatQuery) {
     const e = this.ally!;
     e.previous.copy(e.position);
-    this.desired.copy(this.escortGoal).sub(e.position).normalize();
+    if (this.elapsed < this.allyReleaseAt) {
+      e.velocity.set(0, 0, 0);
+      return;
+    }
+    if (e.state === "patrol") {
+      // Runway clear: line up on the threshold and roll.
+      const start = runwayThreshold(HAVEN.runway);
+      e.position.set(start.x, this.ground(start.x, start.z, query) + 4, start.z);
+      e.previous.copy(e.position);
+      e.quaternion.setFromAxisAngle(this.forward.set(0, 1, 0), start.heading);
+      e.state = "approach";
+    }
+    e.speed = Math.min(125, e.speed + dt * 6);
+    const leg = ESCORT_ROUTE[Math.min(this.escortLeg, ESCORT_ROUTE.length - 1)];
+    if (this.escortLeg < ESCORT_ROUTE.length)
+      this.desired.set(leg.x, leg.altitude, leg.z);
+    else this.desired.copy(this.escortGoal);
+    if (
+      this.escortLeg < ESCORT_ROUTE.length - 1 &&
+      Math.hypot(e.position.x - leg.x, e.position.z - leg.z) < 450
+    )
+      this.escortLeg++;
+    else if (
+      this.escortLeg === ESCORT_ROUTE.length - 1 &&
+      Math.hypot(e.position.x - leg.x, e.position.z - leg.z) < 450
+    )
+      this.escortLeg = ESCORT_ROUTE.length;
+    const targetY = this.desired.y;
+    this.desired.sub(e.position).setY(0).normalize();
+    // Climb at a transport's gentle angle, only once flying speed is reached.
     const ahead = this.aim.copy(e.position).addScaledVector(this.desired, 500);
-    const clearance = this.ground(ahead.x, ahead.z, query) + 450;
-    if (e.position.y < clearance)
-      this.desired.y = Math.max(0.35, this.desired.y);
+    const floor = this.ground(ahead.x, ahead.z, query) + 300;
+    const wanted = Math.max(targetY, floor);
+    this.desired.y =
+      e.speed < 70 ? 0 : MathUtils.clamp((wanted - e.position.y) / 600, -0.15, 0.22);
+    if (e.position.y < floor) this.desired.y = Math.max(0.22, this.desired.y);
     this.desired.normalize();
     this.targetQuaternion.setFromUnitVectors(this.localForward, this.desired);
-    e.quaternion.rotateTowards(this.targetQuaternion, 0.5 * dt);
+    // No turning on the takeoff roll.
+    if (e.speed > 80) e.quaternion.rotateTowards(this.targetQuaternion, 0.35 * dt);
+    else if (e.speed >= 70)
+      e.quaternion.rotateTowards(this.targetQuaternion, 0.1 * dt);
     e.velocity
       .copy(this.localForward)
       .applyQuaternion(e.quaternion)
       .multiplyScalar(e.speed);
     e.position.addScaledVector(e.velocity, dt);
+    const runway = this.ground(e.position.x, e.position.z, query) + 4;
+    if (e.position.y < runway) e.position.y = runway;
   }
   private fireGun(
     position: Vector3,
@@ -806,21 +1197,124 @@ export class CombatSystem {
     hostile: boolean,
     owner: number,
     targetId: number,
+    profile: MissileProfile,
+    launchSpeed = profile.launchSpeed,
   ) {
     const missile = this.missiles.find((m) => !m.active);
-    if (!missile) return false;
-    missile.active = true;
-    missile.hostile = hostile;
-    missile.owner = owner;
-    missile.targetId = targetId;
-    missile.guided = true;
-    missile.direction.copy(direction);
-    missile.position.copy(position).addScaledVector(direction, 15);
-    missile.previous.copy(missile.position);
-    missile.life = 0;
-    missile.speed = hostile ? 380 : 440;
+    if (!missile) return null;
+    this.point.copy(position).addScaledVector(direction, 15);
+    launchMissile(
+      missile,
+      profile,
+      this.point,
+      direction,
+      hostile,
+      owner,
+      targetId,
+      launchSpeed,
+    );
     this.event("missile", missile.position, missile.id, !hostile);
+    return missile;
+  }
+  launchSam(unit: SamUnit, position: Vector3, direction: Vector3) {
+    const missile = this.missiles.find((m) => !m.active);
+    if (!missile) return false;
+    launchMissile(
+      missile,
+      unit.rules.missile,
+      position,
+      direction,
+      true,
+      unit.launcher.id,
+      PLAYER_ID,
+    );
+    this.samLaunchAt = this.elapsed;
+    this.event("samLaunch", position, missile.id, false, 1, { direction });
     return true;
+  }
+  inFlight(owner: number) {
+    let n = 0;
+    for (const m of this.missiles) if (m.active && m.owner === owner) n++;
+    return n;
+  }
+  samsInFlight() {
+    let n = 0;
+    for (const m of this.missiles)
+      if (
+        m.active &&
+        m.hostile &&
+        m.targetId === PLAYER_ID &&
+        (m.profile.id === "shorad" || m.profile.id === "mrsam")
+      )
+        n++;
+    return n;
+  }
+  /** Ejected below and behind the jet; seekers judge it when it enters their view. */
+  private releaseFlare(player: CombatPlayer) {
+    const i = this.flareIndex;
+    this.flareIndex = (i + 1) % this.flareDecoys.length;
+    const f = this.flareDecoys[i];
+    f.active = true;
+    f.age = 0;
+    f.position.copy(player.position);
+    f.velocity.copy(player.velocity).multiplyScalar(0.55);
+    f.velocity.y -= 25;
+    const bit = ~(1 << i);
+    for (const m of this.missiles) {
+      m.flaresSeen &= bit;
+      m.flaresDecoyed &= bit;
+    }
+  }
+  private updateFlares(dt: number) {
+    for (const f of this.flareDecoys) {
+      if (!f.active) continue;
+      f.age += dt;
+      if (f.age > FLARE_BURN) {
+        f.active = false;
+        continue;
+      }
+      f.velocity.multiplyScalar(Math.exp(-1.6 * dt));
+      f.velocity.y -= 9.81 * dt;
+      f.position.addScaledVector(f.velocity, dt);
+    }
+  }
+  /**
+   * Heat seeker: the hottest source inside the forward cone and within reach.
+   * Returns the source key and writes its position, or NO_SOURCE for nothing seen.
+   */
+  private seek(m: Missile, victim: CombatPlayer | CombatEntity, heat: number, out: Vector3) {
+    const p = m.profile;
+    const cos = Math.cos(p.cone);
+    let best = NO_SOURCE,
+      bestHeat = 0;
+    this.direction.copy(victim.position).sub(m.position);
+    let d = this.direction.length();
+    if (
+      d <= seekerRange(p, heat) &&
+      (d < 1 || this.direction.dot(m.direction) >= cos * d)
+    ) {
+      best = m.targetId;
+      bestHeat = heat;
+      out.copy(victim.position);
+    }
+    for (let i = 0; i < this.flareDecoys.length; i++) {
+      const f = this.flareDecoys[i];
+      if (!f.active) continue;
+      this.direction.copy(f.position).sub(m.position);
+      d = this.direction.length();
+      if (d > p.seekerRange || this.direction.dot(m.direction) < cos * d) continue;
+      const bit = 1 << i;
+      if (!(m.flaresSeen & bit)) {
+        m.flaresSeen |= bit;
+        if (this.random() < flareDecoyChance(p, heat)) m.flaresDecoyed |= bit;
+      }
+      if (m.flaresDecoyed & bit && FLARE_HEAT > bestHeat) {
+        best = FLARE_KEY + i;
+        bestHeat = FLARE_HEAT;
+        out.copy(f.position);
+      }
+    }
+    return best;
   }
   private updateProjectiles(
     dt: number,
@@ -838,82 +1332,107 @@ export class CombatSystem {
       }
       const hit = t.hostile
         ? this.hitFriendly(t.previous, t.position, player, 9)
-        : this.enemies.find(
-            (e) =>
-              e.active &&
-              sweptMovingHit(
-                t.previous,
-                t.position,
-                e.previous,
-                e.position,
-                e.kind === "ground" ? 25 : 12,
-              ),
-          );
-      if (hit && !this.blocked(t.previous, t.position, query)) {
-        this.damageEntity(hit, 9, player);
+        : this.hitEnemy(t.previous, t.position, 0);
+      const blocked = this.blocked(t.previous, t.position, query);
+      if (hit && (!blocked || this.isGround(hit))) {
+        this.damageEntity(hit, 9, player, "gun");
         t.active = false;
-      } else if (this.blocked(t.previous, t.position, query)) t.active = false;
+      } else if (blocked) {
+        // Rounds striking an installation's own structure still count.
+        const structure = t.hostile ? undefined : this.groundNear(t.position, 12);
+        if (structure) this.damageEntity(structure, 9, player, "gun");
+        t.active = false;
+      }
     }
+    const heat = engineHeat(player);
     for (const m of this.missiles) {
       if (!m.active) continue;
-      const target =
+      const victim =
         m.targetId === PLAYER_ID
           ? player
           : m.targetId === ALLY_ID
             ? this.ally
             : this.enemies.find((e) => e.id === m.targetId && e.active);
-      if (target && m.guided) {
-        this.desired
-          .copy(target.position)
-          .addScaledVector(
-            target.velocity,
-            Math.min(
-              1.2,
-              (m.position.distanceTo(target.position) / m.speed) * 0.55,
-            ),
-          )
-          .sub(m.position)
-          .normalize();
-        const angle = m.direction.angleTo(this.desired);
-        if (angle > 1e-5) {
-          // Slerp on unit directions through a quaternion: finite turn rate even behind target.
-          this.targetQuaternion.setFromUnitVectors(m.direction, this.desired);
-          this.targetQuaternion.slerp(
-            this.identityQuaternion,
-            1 - Math.min(1, (dt * 1.7) / angle),
-          );
-          m.direction.applyQuaternion(this.targetQuaternion).normalize();
+      let source = NO_SOURCE;
+      if (victim && victim !== player && !m.hostile && (victim as CombatEntity).active) {
+        // The player's missiles fly the datalink onto the locked target.
+        source = m.targetId;
+        this.desired.copy(victim.position);
+      } else if (victim && (victim === player || (victim as CombatEntity).active)) {
+        const victimHeat = victim === player ? heat : 1.2;
+        source = this.seek(m, victim, victimHeat, this.desired);
+        if (
+          source === NO_SOURCE &&
+          victim === player &&
+          this.airDefense.commandLink(m.owner)
+        ) {
+          // Midcourse: the battery radar steers the missile until its seeker sees the jet.
+          source = PLAYER_ID;
+          this.desired.copy(player.position);
         }
       }
-      m.previous.copy(m.position);
-      m.position.addScaledVector(m.direction, m.speed * dt);
-      m.life += dt;
-      if (m.life > 10) {
+      m.guided = source === m.targetId;
+      advanceMissile(m, source !== NO_SOURCE ? this.desired : null, source, dt);
+      if (missileSpent(m)) {
+        if (m.hostile) this.event("explosion", m.position, m.id, false, 0.35, { kind: "air" });
         m.active = false;
         continue;
       }
-      const hit = m.hostile
-        ? this.hitFriendly(m.previous, m.position, player, 17)
-        : this.enemies.find(
-            (e) =>
-              e.active &&
-              sweptMovingHit(
-                m.previous,
-                m.position,
-                e.previous,
-                e.position,
-                e.kind === "ground" ? 29 : 18,
-              ),
-          );
-      if (hit && !this.blocked(m.previous, m.position, query)) {
-        this.damageEntity(hit, m.hostile ? 20 : 65, player);
-        this.event("explosion", m.position, m.id, !m.hostile, 0.6);
+      let hit: CombatEntity | CombatPlayer | undefined;
+      let miss = 0;
+      if (m.hostile) {
+        const fuze = m.profile.fuze;
+        miss = sweptClosest(m.previous, m.position, player.previous, player.position);
+        if (miss <= fuze) hit = player;
+        else if (
+          this.ally?.active &&
+          (miss = sweptClosest(
+            m.previous,
+            m.position,
+            this.ally.previous,
+            this.ally.position,
+          )) <= fuze + 4
+        )
+          hit = this.ally;
+      } else hit = this.hitEnemy(m.previous, m.position, 6);
+      const blocked = this.blocked(m.previous, m.position, query);
+      if (hit && (!blocked || this.isGround(hit))) {
+        // Proximity burst: a near miss does about half the damage of a direct hit.
+        const damage = m.hostile
+          ? m.profile.damage * (1 - 0.5 * MathUtils.clamp(miss / m.profile.fuze, 0, 1))
+          : m.profile.damage;
+        this.damageEntity(hit, damage, player, "missile");
+        this.event("explosion", m.position, m.id, !m.hostile, 0.6, {
+          kind: this.isGround(hit) ? "ground" : "air",
+        });
         m.active = false;
-      } else if (this.blocked(m.previous, m.position, query)) {
-        this.event("explosion", m.position, m.id, false, 0.4);
+      } else if (blocked) {
+        const structure = m.hostile ? undefined : this.groundNear(m.position, 20);
+        if (structure) this.damageEntity(structure, m.profile.damage, player, "missile");
+        this.event("explosion", m.position, m.id, !m.hostile, 0.4, { kind: "ground" });
         m.active = false;
       }
     }
+  }
+  private isGround(hit: CombatEntity | CombatPlayer) {
+    return (hit as CombatEntity).kind === "ground";
+  }
+  private hitEnemy(from: Vector3, to: Vector3, margin: number) {
+    for (const e of this.enemies)
+      if (
+        e.active &&
+        sweptMovingHit(from, to, e.previous, e.position, e.radius + margin)
+      )
+        return e;
+  }
+  private groundNear(point: Vector3, margin: number) {
+    for (const e of this.enemies)
+      if (
+        e.active &&
+        e.kind === "ground" &&
+        e.position.distanceTo(point) < e.radius + margin
+      )
+        return e;
   }
   private hitFriendly(
     from: Vector3,
@@ -934,18 +1453,19 @@ export class CombatSystem {
     target: CombatEntity | CombatPlayer,
     damage: number,
     player: CombatPlayer,
+    weapon: "gun" | "missile",
   ) {
     if (target === player) {
       this.playerHealth = Math.max(0, this.playerHealth - damage);
-      this.event("hit", player.position, PLAYER_ID, true);
+      this.event("hit", player.position, PLAYER_ID, true, 1, { weapon });
       return;
     }
     const e = target as CombatEntity;
     e.health = Math.max(0, e.health - damage);
-    this.event("hit", e.position, e.id);
+    this.event("hit", e.position, e.id, false, 1, { weapon });
     if (
       e.kind === "air" &&
-      !(this.active === "intercept" && this.elapsed < 12)
+      !(this.patrol && this.active === "intercept" && this.elapsed < 12)
     ) {
       e.state = "evade";
       e.stateTime = 0;
@@ -953,20 +1473,90 @@ export class CombatSystem {
     if (e.health <= 0) {
       e.active = false;
       if (e.kind !== "ally") this.kills++;
+      if (e.role === "target") {
+        if (e.tag !== "radar") this.bonus++;
+        this.onTargetDestroyed?.(e.tag);
+      }
       this.event(
         "explosion",
         e.position,
         e.id,
         false,
-        e.kind === "ground" ? 2 : 1.2,
+        e.kind === "ground" ? (e.role === "target" ? 3 : 1.6) : 1.2,
+        { kind: e.kind === "ground" ? "ground" : "air" },
       );
     }
+  }
+  /** Clockwise bearing from the nose (rad); yaw grows to the left (west of north). */
+  private bearing(player: CombatPlayer, yaw: number, at: Vector3) {
+    const b =
+      yaw - Math.atan2(-(at.x - player.position.x), -(at.z - player.position.z));
+    return Math.atan2(Math.sin(b), Math.cos(b));
+  }
+  private readonly addContact = (
+    player: CombatPlayer,
+    yaw: number,
+    at: Vector3,
+    range: number,
+    level: 1 | 2 | 3,
+    source: RwrContact["source"],
+  ) => {
+    const w = this.warning;
+    if (w.count >= MAX_RWR) return;
+    const c = w.contacts[w.count++];
+    c.bearing = this.bearing(player, yaw, at);
+    c.range = range;
+    c.level = level;
+    c.source = source;
+    if (level > w.level) w.level = level;
+  };
+  /** Warning receiver: emitters, trackers and the nearest guided missile. */
+  private updateWarning(player: CombatPlayer) {
+    const w = this.warning;
+    w.count = 0;
+    w.level = 0;
+    this.forward.copy(this.localForward).applyQuaternion(player.quaternion);
+    const yaw = Math.atan2(-this.forward.x, -this.forward.z);
+    const add = this.addContact;
+    for (const u of this.airDefense.units)
+      if (u.rwr > 0)
+        add(player, yaw, u.sensor, u.range, u.rwr as 1 | 2 | 3, u.rules.type);
+    for (const e of this.enemies) {
+      if (!e.active || e.kind !== "air" || this.elapsed < e.releaseAt) continue;
+      const range = e.position.distanceTo(player.position);
+      const firing = this.inFlight(e.id) > 0;
+      if (firing || ((e.state === "attack" || e.state === "approach") && range < 6000))
+        add(player, yaw, e.position, range, firing ? 3 : 2, "fighter");
+    }
+    let nearest = Infinity,
+      threat = false;
+    w.missile = false;
+    for (const m of this.missiles) {
+      if (!m.active || !m.hostile || m.targetId !== PLAYER_ID || !m.guided) continue;
+      const d = m.position.distanceTo(player.position);
+      this.direction.copy(player.position).sub(m.position);
+      const closing = (this.direction.dot(m.direction) * m.speed) / Math.max(d, 1);
+      if (d < 2300 || d < closing * 6) threat = true;
+      if (d < nearest) {
+        nearest = d;
+        w.missile = true;
+        w.missileRange = d;
+        w.missileSam = m.profile.id === "shorad" || m.profile.id === "mrsam";
+        w.missileBearing = this.bearing(player, yaw, m.position);
+      }
+    }
+    // Brief hold so a decoyed seeker flickering back does not re-trigger every call.
+    if (threat) this.threatUntil = this.elapsed + 0.6;
+    this.threatening = threat || this.elapsed < this.threatUntil;
+    w.samLaunch = this.elapsed - this.samLaunchAt < 3;
   }
   private finish(success: boolean, position: Vector3, message: string) {
     this.completed = success;
     this.failed = !success;
     this.result = message;
     this.threatening = false;
+    this.warning.count = this.warning.level = 0;
+    this.warning.samLaunch = this.warning.missile = false;
     for (const m of this.missiles) m.active = false;
     for (const t of this.tracers) t.active = false;
     this.event(success ? "complete" : "failed", position, undefined, true);
