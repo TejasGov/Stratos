@@ -34,6 +34,7 @@ Advanced mode unlocks full loops and rolls.
 | **Intercept**       | Clear three hostile fighters from the airspace.                                |
 | **Escort**          | Protect a transport as it flies to safety.                                     |
 | **Ground strike**   | Destroy an enemy radar site guarded by fighters.                               |
+| **War · Iron Dawn** | Lead two wingmen: intercept, low ingress, bombing run, then the counterattack. |
 
 ## Gallery
 
@@ -155,10 +156,26 @@ the selected fighter and adjusts thrust to help you stay with it.
 1. Hold **left mouse / F** to fire the cannon.
 2. Tap **right mouse / X** for a missile. A tap queues briefly while the lock finishes.
 3. Use **T** to select another target and **V** when an incoming missile threatens you.
+   A prompt bar near the bottom of the screen always shows the key that matters right now.
 4. Press **G**, or use the HUD button, to toggle target follow. **WASD** takes manual control.
 
 The lead pipper shows the cannon's predicted intercept point. Missile lock feedback explains when
 a target is out of alignment, too far away, obstructed, or waiting for cooldown.
+
+### War · Operation Iron Dawn
+
+The longest sortie, commanded over the radio by **Citadel**, a British air officer. Two AI
+wingmen, **Viper 2** and **Viper 3**, form up on you after takeoff and fight on their own; they
+can be shot down. The operation runs in four phases:
+
+1. **Intercept.** Clear three bandits coming down from Blackridge.
+2. **Ingress.** Fly through three lit markers up the eastern channel, under 450 m, below the
+   battery radar.
+3. **Bombing.** Release bombs with **N** when the **BOMB** pipper sits on the Blackridge radar,
+   fuel farm and shelters (eight bombs).
+4. **Counterattack.** Four more bandits come in from 15 km north; hold the line.
+
+The minimap zooms out to 20 km for the wider battle area.
 
 ### Photo mode
 
@@ -196,6 +213,7 @@ browser.
 | **Right mouse / X** — tap | Launch or queue a guided missile         |
 | **T**                     | Cycle targets                            |
 | **V**                     | Deploy countermeasures                   |
+| **N**                     | Release a bomb (War and Ground strike)   |
 | **G**                     | Toggle target follow in Easy mode        |
 | **B**                     | Start / leave an intercept patrol        |
 | **R**                     | Restart the current flight or sortie     |
@@ -260,7 +278,7 @@ npm test          # Run automated tests
 npm run build     # Type-check and build into dist/
 ```
 
-The suite has **110 tests** covering flight stability and frame-rate independence, runway
+The suite has **114 tests** covering flight stability and frame-rate independence, runway
 takeoff and simulated-pilot landings in every jet, the cobra, engine failure, air-defence detection and decoys, base layout
 and crowd placement, collision and rebasing, the collision surface matching the drawn terrain, streaming, weapons and kills,
 aim-assist limits, input buffering, bounded effects, fleet geometry and ratings, dynamic
@@ -303,6 +321,8 @@ Female Military Commander*), directed with audio tags; script, prompts and maste
 ([Aerial Grass Rock](https://polyhaven.com/a/aerial_grass_rock),
 [Aerial Rocks 02](https://polyhaven.com/a/aerial_rocks_02),
 [Aerial Sand](https://polyhaven.com/a/aerial_sand)), licensed [CC0](https://polyhaven.com/license).
+The town buildings wear [Painted Plaster Wall](https://polyhaven.com/a/painted_plaster_wall) by
+**Amal Kumar** (CC0), mapped triplanar in world space.
 Source URLs and checksums are in the [asset manifest](public/assets/polyhaven/manifest.json).
 
 **Fonts.** Barlow, Barlow Condensed and B612 Mono from Google Fonts (SIL Open Font License).
