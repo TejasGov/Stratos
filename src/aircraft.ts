@@ -21,6 +21,13 @@ export interface Airframe {
   /** Starboard wingtip [x, y, z] in model units (mirrored for port). */
   tip: [number, number, number];
   performance: { thrust: number; afterburner: number; drag: number; agility: number };
+  /** Twin-engine jets steer with differential thrust and can fly home on one engine. */
+  engines: 1 | 2;
+  /** Radar cross-section relative to a 4th-generation fighter (1); stealth shapes are far smaller. */
+  rcs: number;
+  /** 0..1 post-stall authority: 1 flies a full Pugachev's cobra, low values only a shallow pitch-up. */
+  supermanoeuvre: number;
+  thrustVectoring: boolean;
 }
 
 const MODEL_LENGTH = 1.9;
@@ -38,6 +45,10 @@ export const FLEET: Airframe[] = [
     nozzleRadius: 0.071,
     tip: [0.43, 0.006, 0.63],
     performance: { thrust: 1, afterburner: 1, drag: 1, agility: 1 },
+    engines: 1,
+    rcs: 0.15,
+    supermanoeuvre: 0.45,
+    thrustVectoring: false,
   },
   {
     id: "su57",
@@ -54,6 +65,10 @@ export const FLEET: Airframe[] = [
     nozzleRadius: 0.052,
     tip: [0.515, -0.154, 0.715],
     performance: { thrust: 1.1, afterburner: 1.1, drag: 1, agility: 1.2 },
+    engines: 2,
+    rcs: 0.35,
+    supermanoeuvre: 1.0,
+    thrustVectoring: true,
   },
   {
     id: "f22",
@@ -70,6 +85,10 @@ export const FLEET: Airframe[] = [
     nozzleRadius: 0.05,
     tip: [0.42, -0.14, 0.67],
     performance: { thrust: 1.15, afterburner: 1.08, drag: 0.95, agility: 1.1 },
+    engines: 2,
+    rcs: 0.1,
+    supermanoeuvre: 0.9,
+    thrustVectoring: true,
   },
   {
     id: "j20",
@@ -86,6 +105,10 @@ export const FLEET: Airframe[] = [
     nozzleRadius: 0.045,
     tip: [0.54, -0.074, 0.676],
     performance: { thrust: 1.05, afterburner: 1.12, drag: 0.92, agility: 0.9 },
+    engines: 2,
+    rcs: 0.3,
+    supermanoeuvre: 0.55,
+    thrustVectoring: false,
   },
   {
     id: "su30",
@@ -102,6 +125,10 @@ export const FLEET: Airframe[] = [
     nozzleRadius: 0.043,
     tip: [0.32, -0.094, 0.638],
     performance: { thrust: 1, afterburner: 1.05, drag: 1.08, agility: 1.25 },
+    engines: 2,
+    rcs: 1.0,
+    supermanoeuvre: 1.0,
+    thrustVectoring: true,
   },
   {
     id: "rafale",
@@ -115,6 +142,10 @@ export const FLEET: Airframe[] = [
     nozzleRadius: 0.046,
     tip: [0.22, -0.08, 0.547],
     performance: { thrust: 0.98, afterburner: 1, drag: 0.98, agility: 1.12 },
+    engines: 2,
+    rcs: 0.55,
+    supermanoeuvre: 0.6,
+    thrustVectoring: false,
   },
   {
     id: "typhoon",
@@ -131,6 +162,10 @@ export const FLEET: Airframe[] = [
     nozzleRadius: 0.044,
     tip: [0.325, -0.08, 0.682],
     performance: { thrust: 1.12, afterburner: 1.08, drag: 0.97, agility: 1.08 },
+    engines: 2,
+    rcs: 0.65,
+    supermanoeuvre: 0.55,
+    thrustVectoring: false,
   },
   {
     id: "tejas",
@@ -144,6 +179,10 @@ export const FLEET: Airframe[] = [
     nozzleRadius: 0.065,
     tip: [0.47, -0.07, 0.556],
     performance: { thrust: 0.92, afterburner: 0.98, drag: 0.88, agility: 1.18 },
+    engines: 1,
+    rcs: 0.6,
+    supermanoeuvre: 0.5,
+    thrustVectoring: false,
   },
   {
     id: "mig21",
@@ -157,6 +196,10 @@ export const FLEET: Airframe[] = [
     nozzleRadius: 0.055,
     tip: [0.18, -0.13, 0.624],
     performance: { thrust: 0.9, afterburner: 1.06, drag: 0.86, agility: 0.82 },
+    engines: 1,
+    rcs: 1.0,
+    supermanoeuvre: 0.3,
+    thrustVectoring: false,
   },
 ];
 
