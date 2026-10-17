@@ -100,6 +100,31 @@ export const LINES = {
     priority: 2,
     cooldown: 10,
   },
+  cleared: {
+    text: "Kestrel, Haven Control. Runway three-six, wind calm. You are cleared for takeoff.",
+    priority: 1,
+    cooldown: 30,
+  },
+  samLaunch: {
+    text: "SAM launch, SAM launch! Kestrel, break and get low!",
+    priority: 4,
+    cooldown: 10,
+  },
+  radarLock: {
+    text: "Kestrel, you're spiked. Their radar has a lock on you. Get down in the valleys.",
+    priority: 3,
+    cooldown: 30,
+  },
+  engineFire: {
+    text: "Kestrel, you've got an engine fire! Throttle back and point her at home.",
+    priority: 4,
+    cooldown: 20,
+  },
+  welcomeHome: {
+    text: "Wheels down, Kestrel. Welcome home. The ground crew wanted their jet back in one piece… and for once, it is.",
+    priority: 2,
+    cooldown: 60,
+  },
 } as const;
 export type Line = keyof typeof LINES;
 

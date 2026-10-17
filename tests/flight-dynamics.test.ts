@@ -263,3 +263,20 @@ test("the runway surface is not a collision; terrain elsewhere still is", () => 
   // Same height over the hills beside Haven's runway: terrain impact.
   assert.equal(sweptCollision(new Vector3(-600, 31, 0), new Vector3(-600, 31, -50)), true);
 });
+
+test("afterburner builds speed over seconds, not a catapult, and keeps the sea-level top speed", () => {
+  const f = jet("sf35");
+  f.reset();
+  f.position.y = 1500;
+  f.previous.copy(f.position);
+  f.speed = 105;
+  f.velocity.set(0, 0, -105);
+  f.throttle = 1;
+  let reached = -1;
+  for (let i = 1; i <= 60 * 90; i++) {
+    f.step(step, { ...neutral, throttle: 1, boost: true });
+    if (reached < 0 && f.speed >= 300) reached = i * step;
+  }
+  assert.ok(reached > 4, `105→300 m/s in ${reached.toFixed(1)} s`);
+  assert.ok(f.mach > 0.92 && f.mach < 1.1, `top speed Mach ${f.mach.toFixed(2)}`);
+});

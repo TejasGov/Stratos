@@ -134,7 +134,13 @@ class Game {
   /** Warning-receiver cues: search pings, launch warble cadence. */
   private rwrAudio = { search: 0, ping: 0, launch: 0 };
   /** What Haven Control has already called this flight. */
-  private radio = { milestone: 0, kills: 0, damaged: false, threat: false, terrainCue: 0 };
+  /** Title theme, streamed: fades in on the title screen, out when a sortie starts. */
+  private theme = Object.assign(new Audio("/assets/music/stratos-theme.mp3"), {
+    loop: true,
+    preload: "none",
+    volume: 0,
+  });
+  private radio = { milestone: 0, kills: 0, damaged: false, threat: false, spiked: false, terrainCue: 0 };
   private lastLock = false;
   /** Radio call held until wheels-up: the brief only makes sense once airborne. */
   private liftoffCall: Line | null = null;
@@ -231,8 +237,10 @@ class Game {
       if (this.state === "flight") this.comms.say("machOne", 1.4);
     };
     this.comms.onSubtitle = (text) => this.subtitle(text);
-    this.flight.onTouchdown = (sink) =>
+    this.flight.onTouchdown = (sink) => {
       this.hud.announce("TOUCHDOWN", `SINK ${sink.toFixed(1)} M/S · Z BRAKES`, this.time);
+      if (this.state === "flight") this.comms.say("welcomeHome", 0.8);
+    };
     this.loadSave();
     this.setState("menu");
     this.bindUI();
@@ -526,6 +534,9 @@ class Game {
       this.save();
     };
     el("start").onclick = () => this.start();
+    const titleGesture = () => this.state === "menu" && this.playTheme();
+    window.addEventListener("pointerdown", titleGesture);
+    window.addEventListener("keydown", titleGesture);
     el("resume").onclick = () => this.resume();
     el("restart").onclick = () => this.restart();
     el("retry").onclick = () => this.restart();
@@ -738,6 +749,7 @@ class Game {
       });
     this.resetRadio();
     this.liftoffCall = combatMission ?? (route ? "routeStart" : "takeoff");
+    this.comms.say("cleared", INTRO_SECONDS - 1);
     this.buildRings();
     this.updateObjective();
     this.toast(
@@ -1009,6 +1021,10 @@ class Game {
       { passive: false },
     );
   }
+  /** Browsers only start audio from a gesture, so the theme starts on the first click or key. */
+  private playTheme() {
+    if (this.audio.enabled && this.theme.paused) this.theme.play().catch(() => {});
+  }
   private resume() {
     this.last = 0;
     this.setState("flight");
@@ -1020,6 +1036,7 @@ class Game {
   }
   private menu() {
     this.save();
+    this.playTheme();
     this.comms.clear();
     this.mission.stop();
     this.combat.stop();
@@ -1125,6 +1142,9 @@ class Game {
     )
       this.applyQuality();
     this.fps = T.MathUtils.damp(this.fps, 1 / Math.max(dt, 0.001), 2, dt);
+    const music = this.state === "menu" && this.audio.enabled && !this.photo && !document.hidden ? 0.55 : 0;
+    this.theme.volume = T.MathUtils.clamp(T.MathUtils.damp(this.theme.volume, music, music ? 0.7 : 2.5, dt), 0, 1);
+    if (!music && this.theme.volume < 0.01 && !this.theme.paused) this.theme.pause();
     engine.update();
     if (this.state === "flight") {
       this.accumulator += dt;
@@ -1566,10 +1586,12 @@ class Game {
           this.shakeAmount = this.settings.shake ? 0.8 : 0;
           if (event.weapon === "missile") {
             this.flight.damageEngine();
+            this.comms.say("engineFire", 0.3);
             this.shakeAmount = this.settings.shake ? 1.4 : 0;
           }
         } else if (event.entityId !== -1) this.hitUntil = this.time + 0.18;
       } else if (event.type === "complete" || event.type === "failed") {
+        this.world.crowds.react(event.type === "complete" ? "success" : "failure");
         if (event.type === "complete") this.comms.say("clear", 0.8);
         else if (this.combat.status.result === "Transport lost") this.comms.say("escortLost", 0.8);
         this.toast(
@@ -1827,8 +1849,13 @@ class Game {
     el("target-follow").setAttribute("aria-pressed", String(this.targetFollow));
     el("combat-hints").textContent =
       `Left click / ${b.gun.slice(3)} gun · right click / ${b.missile.slice(3)} missile · ${b.target.slice(3)} target · ${b.flare.slice(3)} flare${this.inputActions.connected ? " · GAMEPAD" : ""}`;
-    if (status.threat && !this.radio.threat && this.state === "flight") this.comms.say("missile");
+    if (status.threat && !this.radio.threat && this.state === "flight")
+      this.comms.say(status.samLaunch ? "samLaunch" : "missile");
     this.radio.threat = status.threat;
+    // Only radar batteries "spike" you; IR launchers give no warning until they fire.
+    const spiked = this.combat.airDefense.units.some((u) => u.track > 0 && u.rules.radarVehicle);
+    if (spiked && !this.radio.spiked && this.state === "flight") this.comms.say("radarLock");
+    this.radio.spiked = spiked;
     if (status.threat && this.state === "flight") {
       this.warningText = "INCOMING MISSILE · EVADE / COUNTERMEASURE";
       if (this.time - this.lastThreatCue > 0.75) {
@@ -2020,7 +2047,7 @@ class Game {
     this.radio.milestone = RADIO_MILESTONES.filter(([altitude]) => y >= altitude).length;
     this.radio.kills = 0;
     this.radio.damaged = false;
-    this.radio.threat = false;
+    this.radio.threat = this.radio.spiked = false;
   }
   /** Calls driven by flight state rather than discrete events. */
   private radioCalls() {
