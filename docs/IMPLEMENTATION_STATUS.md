@@ -75,4 +75,10 @@ Branch `local/iter6-integration` merges the four parallel feature branches (`wip
 
 **Validation.** Type-check, production build and 108 tests pass. In the browser (stepped frame by frame with `stratos.frame()` because the page was often in the background): a Su-30 cobra peaks at 110° AoA, bleeds 45% of its speed and recovers in about 2.3 s; one engine then both fail with fire trails and a glide; a high, afterburning Su-30 run into Blackridge is shot down without flares and survives five inbound missiles with them; the radar SAM tracks a Su-30 at 9 km but an F-22 only at 5.6 km; destroying the radar raises a ground explosion, swaps in the wreck and kills its guards. With the whole Haven crowd in view the soldiers add about 126 draw calls and 0.9 M triangles (shadows included).
 
-**Not yet verified.** A hand-flown landing in the browser (covered only by unit tests), performance at dusk on a real GPU with explosions and flares on screen, and physical gamepads. With full afterburner and back stick right after takeoff the jet gains about 200 m/s in two seconds; this predates iteration 6 and needs tuning. The cinematic trailer is not started (the ElevenLabs balance is empty).
+**Follow-up (October 17).**
+- **Audio.** An original theme song (ElevenLabs Music v2.5, custom lyrics) plays on the title screen. Five new Haven Control calls were added: cleared for takeoff, SAM launch, radar lock, engine fire and welcome home. Every take was checked with speech-to-text.
+- **Afterburner.** Afterburner thrust now ramps in with airspeed (cubic up to 300 m/s). Top speeds are unchanged, but 105 → 300 m/s now takes about 5.5 s instead of 1.8 s; a regression test guards this.
+- **Landing and takeoff tests.** A simulated pilot now lands every jet on Haven in both control modes. Haven sits in a valley, so the approach is steep over the ridge, followed by a shallow 2° final at idle. The takeoff test now covers all nine jets.
+- **Crowds.** Each soldier gets a slight tint, only soldiers within 300 m cast shadows, and Haven cheers or stands alert when a sortie succeeds or fails.
+
+**Not yet verified.** Performance at dusk on a real GPU with explosions and flares on screen, and physical gamepads. The landing is checked with a scripted pilot, not by hand. The cinematic trailer is not started.
