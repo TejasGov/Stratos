@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { Euler, Vector3 } from "three";
 import { Flight, neutral, runwayAt, sweptCollision } from "../src/flight.ts";
-import { airframe, type Airframe } from "../src/aircraft.ts";
+import { FLEET, airframe, type Airframe } from "../src/aircraft.ts";
 import { BLACKRIDGE, HAVEN, runwayThreshold } from "../src/world/bases.ts";
 
 const DEG = Math.PI / 180;
@@ -42,7 +42,7 @@ test("a runway start is parked on the threshold with engines at idle", () => {
 });
 
 test("takeoff roll reaches Vr, the nose only rotates from Vr, and the jet lifts off", () => {
-  for (const id of ["sf35", "su57", "mig21"]) {
+  for (const { id } of FLEET) {
     const f = jet(id);
     f.resetOnRunway(HAVEN.runway);
     const start = f.position.clone();
@@ -262,4 +262,57 @@ test("the runway surface is not a collision; terrain elsewhere still is", () => 
   }
   // Same height over the hills beside Haven's runway: terrain impact.
   assert.equal(sweptCollision(new Vector3(-600, 31, 0), new Vector3(-600, 31, -50)), true);
+});
+
+test("afterburner builds speed over seconds, not a catapult, and keeps the sea-level top speed", () => {
+  const f = jet("sf35");
+  f.reset();
+  f.position.y = 1500;
+  f.previous.copy(f.position);
+  f.speed = 105;
+  f.velocity.set(0, 0, -105);
+  f.throttle = 1;
+  let reached = -1;
+  for (let i = 1; i <= 60 * 90; i++) {
+    f.step(step, { ...neutral, throttle: 1, boost: true });
+    if (reached < 0 && f.speed >= 300) reached = i * step;
+  }
+  assert.ok(reached > 4, `105→300 m/s in ${reached.toFixed(1)} s`);
+  assert.ok(f.mach > 0.92 && f.mach < 1.1, `top speed Mach ${f.mach.toFixed(2)}`);
+});
+
+test("a simulated pilot lands every jet on Haven in both control modes and stops on the runway", () => {
+  const E = HAVEN.runway.elevation;
+  for (const mode of ["assisted", "advanced"] as const)
+    for (const a of FLEET) {
+      const f = jet(a.id);
+      f.controlMode = mode;
+      f.gearHeight = 2;
+      f.reset();
+      // Lined up on runway 36 above the hills south of Haven, 2 km out, gear speed.
+      f.position.set(HAVEN.runway.x, E + f.gearHeight + 125, 2000);
+      f.previous.copy(f.position);
+      f.velocity.set(0, 0, -90);
+      f.speed = 90;
+      f.throttle = 0.35;
+      let sink = -1;
+      f.onTouchdown = (s) => (sink = s);
+      for (let t = 0; t < 60 && !f.onGround && !f.crashed; t += step) {
+        const height = f.position.y - f.gearHeight - E;
+        // Steep over the ridge, then a shallow 2° final at idle: the flight path follows
+        // the nose, so a nose-up flare would climb away rather than cushion the landing.
+        const final = height < 25;
+        const target = (final ? -2 : -5.5) * DEG;
+        f.step(step, {
+          ...neutral,
+          pitch: Math.max(-1, Math.min(1, (target - f.pitch) * 4)),
+          throttle: final || f.speed > 88 ? -1 : f.speed < 78 ? 1 : 0,
+          airbrake: !final && f.speed > 95,
+        });
+      }
+      assert.ok(f.onGround && !f.crashed, `${a.id} ${mode}: touchdown failed (sink ${sink.toFixed(1)})`);
+      for (let t = 0; t < 60 && f.speed > 0; t += step) f.step(step, { ...neutral, airbrake: true, throttle: -1 });
+      assert.equal(f.speed, 0, `${a.id} ${mode} did not stop`);
+      assert.ok(f.position.z > HAVEN.runway.z - HAVEN.runway.length / 2, `${a.id} ${mode} overran the runway`);
+    }
 });

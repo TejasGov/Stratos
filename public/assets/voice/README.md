@@ -31,6 +31,14 @@ link gets rougher in storms and at altitude, with the odd dropout where the sign
 | `landmark.mp3` | Landmark discovered | [curious] Oh, that's a new one. Logging it on the map. |
 | `route-start.mp3` | Gate challenge starts | Gates are lit. One clean line, Kestrel, and the clock starts at the first gate. [playful] No pressure. |
 | `route-done.mp3` | Gate challenge complete | [happy] That's a new time on the board. Not bad at all, Kestrel. |
+| `cleared.mp3` | End of the opening shot on the runway | [crisp, professional] Kestrel, Haven Control. Runway three-six, wind calm. [warmly] You are cleared for takeoff. |
+| `sam-launch.mp3` | Ground-launched missile inbound (replaces the missile call) | [shouting, urgent] SAM launch, SAM launch! Kestrel, break and get low! |
+| `radar-lock.mp3` | A radar SAM battery starts tracking | [tense] Kestrel, you're spiked. Their radar has a lock on you. [firmly] Get down in the valleys. |
+| `engine-fire.mp3` | A missile hit sets an engine on fire | [alarmed] Kestrel, you've got an engine fire! [urgent] Throttle back and point her at home. |
+| `welcome-home.mp3` | Accepted touchdown | [relieved, warmly] Wheels down, Kestrel. Welcome home. [chuckles] The ground crew wanted their jet back in one piece... and for once, it is. |
+
+The last five lines were added in iteration 6 with the same voice and model; each take was
+checked word for word with ElevenLabs Scribe before mastering.
 
 Urgent calls (missile, crash) cut in over chatter; routine calls queue behind whatever is being
 said, and each line has a cooldown so it never nags. Terrain warnings are the jet's own

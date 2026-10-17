@@ -82,6 +82,12 @@ const CLIMB_OUT = 15 * DEG;
  * a jet rather than a rocket.
  */
 const lowSpeed = (speed: number) => MathUtils.lerp(0.25, 1, MathUtils.smoothstep(speed, 50, 150));
+/**
+ * Afterburner share by airspeed. Its thrust is sized to balance drag (∝ v²) near
+ * Mach 1, so it ramps in steeply up to 300 m/s: a runway kick, then a
+ * strong but believable shove instead of 12 g from a slow climb-out.
+ */
+export const burnerShare = (speed: number) => MathUtils.lerp(0.06, 1, (Math.min(speed, 300) / 300) ** 3);
 interface CobraState {
   active: boolean;
   /** 0 pitching up, 1 holding at the peak, 2 nose dropping back. */
@@ -411,8 +417,7 @@ export class Flight {
       const o = this.engines[i].output;
       // On the wheels idle thrust only balances rolling resistance.
       const dry = ground ? (Math.max(0, o - IDLE) / (1 - IDLE)) * (9 + 33 * p.thrust) : this.dryThrust(o);
-      // Afterburner thrust matters at speed; on the runway it is a strong kick, not a catapult.
-      thrust += dry * f + (this.afterburners[i] ? 130 * p.afterburner * f * f : 0);
+      thrust += dry * f + (this.afterburners[i] ? 130 * p.afterburner * burnerShare(this.speed) : 0);
     }
     return (this.thrust = (thrust / this.engines.length) * this.density ** 0.7);
   }

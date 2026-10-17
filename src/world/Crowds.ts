@@ -15,12 +15,15 @@ const CLIPS = [
 type CharId = (typeof CHARACTERS)[number];
 export type ClipName = (typeof CLIPS)[number];
 
+const TINT = new T.Color();
 /** People are sub-pixel well before this; mixers stop and the crowd hides. */
 const VISIBLE_RANGE = 2000;
 /** Blackridge troops this close to a destroyed target go down with it. */
 const STRIKE_RADIUS = 80;
 const DRILL: ClipName[] = ["jumping-jacks", "pushup", "situps", "backflip"];
 const DRILL_PERIOD = 9;
+/** Only figures this close cast shadows; farther ones are a few pixels tall. */
+const SHADOW_RANGE = 300;
 
 interface Loop {
   xs: number[];
@@ -49,6 +52,8 @@ interface Actor {
   current?: T.AnimationAction;
   alive: boolean;
   dieAt: number;
+  meshes: T.Mesh[];
+  shadow: boolean;
 }
 
 function loop(points: { x: number; z: number }[]): Loop {
@@ -150,6 +155,7 @@ export class Crowds {
   private baseGroups = new Map<Base, T.Group>();
   private time = 0;
   private drillIndex = 0;
+  private reacting = false;
   private sample = { x: 0, z: 0, dx: 0, dz: 1 };
 
   constructor(scene: T.Scene) {
@@ -210,7 +216,20 @@ export class Crowds {
       root.position.set(spec.x, spec.y, spec.z);
       root.rotation.y = spec.yaw;
       parent.add(root);
-      const actor: Actor = { spec, root, mixer: new T.AnimationMixer(root), alive: true, dieAt: Infinity };
+      // A slight per-person tint so a squad of the same character reads as individuals.
+      const n = this.actors.length;
+      const meshes: T.Mesh[] = [];
+      root.traverse((o) => {
+        if (!(o instanceof T.Mesh)) return;
+        meshes.push(o);
+        const tint = (m: T.Material) => {
+          const c = (m as T.MeshStandardMaterial).clone();
+          c.color.multiply(TINT.setRGB(1 + 0.08 * Math.sin(n * 2.1), 1 + 0.08 * Math.sin(n * 3.7), 1 + 0.08 * Math.sin(n * 5.3)));
+          return c;
+        };
+        o.material = Array.isArray(o.material) ? o.material.map(tint) : tint(o.material);
+      });
+      const actor: Actor = { spec, root, mixer: new T.AnimationMixer(root), alive: true, dieAt: Infinity, meshes, shadow: true };
       this.actors.push(actor);
       this.play(actor, spec.clip, 0);
       // Out of step with each other, except the drill, which moves as one.
@@ -234,6 +253,15 @@ export class Crowds {
     a.current = next;
   }
 
+  /** Haven's people react to the sortie's outcome until the next reset; walkers keep walking. */
+  react(outcome: "success" | "failure") {
+    this.reacting = true;
+    let i = 0;
+    for (const a of this.actors)
+      if (a.alive && a.spec.base === HAVEN && !a.spec.path)
+        this.play(a, outcome === "success" ? (i++ % 2 ? "wave" : "agree") : "idle-look");
+  }
+
   /** Blackridge troops near a destroyed target fall, the farthest a beat later. */
   strike(targetId: string) {
     const t = BLACKRIDGE_TARGETS.find((x) => x.id === targetId);
@@ -251,6 +279,7 @@ export class Crowds {
   reset() {
     this.time = 0;
     this.drillIndex = 0;
+    this.reacting = false;
     for (const a of this.actors) {
       a.alive = true;
       a.dieAt = Infinity;
@@ -275,12 +304,18 @@ export class Crowds {
     const s = this.sample;
     for (const a of this.actors) {
       if (!a.root.parent?.visible) continue;
+      const near =
+        (a.root.position.x - viewer.x) ** 2 + (a.root.position.z - viewer.z) ** 2 < SHADOW_RANGE * SHADOW_RANGE;
+      if (near !== a.shadow) {
+        a.shadow = near;
+        for (const m of a.meshes) m.castShadow = near;
+      }
       const { spec } = a;
       if (a.dieAt <= this.time) {
         a.dieAt = Infinity;
         this.play(a, "dying-backwards", 0.15);
       }
-      if (a.alive && spec.drill && drillChanged) this.play(a, DRILL[drill]);
+      if (a.alive && spec.drill && drillChanged && !this.reacting) this.play(a, DRILL[drill]);
       if (a.alive && spec.path) {
         const p = spec.path;
         sampleLoop(p.loop, p.along + this.time * p.speed, s);

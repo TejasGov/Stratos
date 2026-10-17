@@ -140,8 +140,10 @@ challenge or sortie.
 
 Every flight opens with a short shot over Haven's apron (any key skips it), then starts parked
 on the runway. Hold **Shift** to spool up (add **Space** for afterburner), pull **W** at the
-ROTATE cue and climb out. To come home, line up with a runway and touch down gently: under
-5 m/s sink, wings level. Hold **Z** to brake.
+ROTATE cue and climb out. To come home, cross the hills at the end of the runway, then fly a
+shallow final with the nose a couple of degrees down and the throttle at idle. The flight path
+follows the nose, so pulling up to flare climbs away instead. Touch down under 5 m/s sink with
+wings level, then hold **Z** to brake.
 
 For a first climb, choose **Ascent**: hold **Space** for afterburner and pitch up. Thin air means
 more speed and softer controls; the HUD calls out the tropopause, the stratosphere and the edge
@@ -258,8 +260,8 @@ npm test          # Run automated tests
 npm run build     # Type-check and build into dist/
 ```
 
-The suite has **108 tests** covering flight stability and frame-rate independence, runway
-takeoff and landing, the cobra, engine failure, air-defence detection and decoys, base layout
+The suite has **110 tests** covering flight stability and frame-rate independence, runway
+takeoff and simulated-pilot landings in every jet, the cobra, engine failure, air-defence detection and decoys, base layout
 and crowd placement, collision and rebasing, the collision surface matching the drawn terrain, streaming, weapons and kills,
 aim-assist limits, input buffering, bounded effects, fleet geometry and ratings, dynamic
 resolution and asset integrity.
@@ -288,6 +290,10 @@ vehicles were generated with Meshy ([defence notes](public/assets/defense/README
 **Sound.** Generated for this project with [ElevenLabs](https://elevenlabs.io) Sound Effects and
 mastered for looping; prompts and processing are listed in the
 [audio notes](public/assets/audio/README.md).
+
+**Music.** The title theme, *Stratos*, is an original cinematic orchestral instrumental generated
+for this project with ElevenLabs Music v2.5 and mastered to about −14 LUFS
+([`public/assets/music/stratos-theme.mp3`](public/assets/music/stratos-theme.mp3)).
 
 **Voice.** Haven Control is voiced with ElevenLabs v4 text to speech (library voice *Eryn – Strong
 Female Military Commander*), directed with audio tags; script, prompts and mastering are in the
