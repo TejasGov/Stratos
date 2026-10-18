@@ -14,8 +14,6 @@ export interface Controls {
   throttleTarget?: number;
   /** Held: speed brake in the air, wheel brakes on the ground. */
   airbrake?: boolean;
-  /** Edge-triggered: start a Pugachev's cobra. */
-  cobra?: boolean;
   /** Edge-triggered: engine master switch (shut down / relight). */
   engineToggle?: boolean;
 }
@@ -101,17 +99,25 @@ const RAM = 0.22;
  * rather than the 6-12 g an unscaled arcade model gave).
  */
 export const FORCE = 0.3;
+/** Cobra pitch dynamics: torques in rad/s² per unit dynamic pressure (150 m/s at sea level). */
+const COBRA = {
+  /** Stick pull that, with the airbrake, starts the manoeuvre. */
+  pull: 0.45,
+  control: 7,
+  vectoring: 6,
+  stability: 5,
+  damping: 3,
+  closing: 330 * DEG,
+  settle: 3 * DEG,
+};
 export const burnerShare = (speed: number) => MathUtils.lerp(0.06, 1, (Math.min(speed, 300) / 300) ** 3);
 interface CobraState {
   active: boolean;
-  /** 0 pitching up, 1 holding at the peak, 2 nose dropping back. */
-  phase: number;
+  /** Nose angle above the flight path (rad, 0..2π) and its pitch rate. */
   alpha: number;
   rate: number;
-  peak: number;
-  rateUp: number;
-  rateDown: number;
-  hold: number;
+  /** Past 330°: the loop finishes on its own whatever the stick does. */
+  closing: boolean;
   /** Flight path: heading and climb angle, held while the nose rotates. */
   heading: number;
   path: number;
@@ -166,19 +172,9 @@ export class Flight {
   gLoad = 1;
   /** Thrust acceleration (m/s²) delivered on the last step. */
   thrust = 0;
-  private cobraState: CobraState = {
-    active: false,
-    phase: 0,
-    alpha: 0,
-    rate: 0,
-    peak: 0,
-    rateUp: 0,
-    rateDown: 0,
-    hold: 0,
-    heading: 0,
-    path: 0,
-    bank: 0,
-  };
+  private cobraState: CobraState = { active: false, alpha: 0, rate: 0, closing: false, heading: 0, path: 0, bank: 0 };
+  /** Airbrake and a hard pull held together last step (the cobra starts on the press). */
+  private cobraInput = false;
   /** Core spool per engine (output before the differential-thrust split). */
   private spool: number[] = [0.63];
   private failedAt: number[] = [0];
@@ -220,6 +216,10 @@ export class Flight {
   }
   get cobraActive() {
     return this.cobraState.active;
+  }
+  /** Nose angle above the flight path during a cobra (rad, up to 2π for a full kulbit). */
+  get cobraAlpha() {
+    return this.cobraState.active ? this.cobraState.alpha : 0;
   }
   /** "ENG OFF", "SPOOLING" or "" for the HUD. */
   get engineStatus() {
@@ -317,14 +317,13 @@ export class Flight {
     this.hintTime = 2.5;
   }
   /**
-   * Pugachev's cobra: the nose snaps up past the vertical while the flight
-   * path barely moves, and the jet bleeds speed like a parachute. Refused
-   * (with a hint) outside its speed window or when banked.
+   * Pugachev's cobra, flown with the airbrake and a hard pull: the nose rears
+   * up while the flight path barely moves and the jet bleeds speed like a
+   * parachute. Refused (with a hint) outside its speed window or when banked.
    */
   startCobra() {
     const c = this.cobraState;
     if (this.onGround || c.active || this.crashed) return false;
-    const sm = this.traits.supermanoeuvre;
     // Heavier, less agile airframes need more speed for the same control power.
     const scale = 1 + 0.15 * (1 - this.performance.agility);
     const low = 110 * scale,
@@ -344,22 +343,9 @@ export class Flight {
       this.notify("COBRA · LEVEL THE WINGS AND FLIGHT PATH");
       return false;
     }
-    // Peak AoA scales with post-stall authority; thrust fights the pitch-up,
-    // so idle (or engines off) lets the nose go highest. Vectoring helps.
-    const power = this.engines.reduce((sum, e) => sum + e.output, 0) / this.engines.length;
-    const authority = MathUtils.clamp((sm - 0.3) / 0.7, 0, 1);
-    c.peak =
-      (sm >= 0.3 ? MathUtils.lerp(35, 112, authority) : (35 * sm) / 0.3) *
-      DEG *
-      (1 - (this.traits.thrustVectoring ? 0.05 : 0.15) * power) *
-      MathUtils.lerp(0.95, 1.04, (this.speed - low) / (high - low));
-    c.rateUp = (55 + 35 * sm) * DEG;
-    // Vectored nozzles push the nose back down hard: a quicker recovery.
-    c.rateDown = (this.traits.thrustVectoring ? 150 : 110) * DEG;
-    c.phase = 0;
     c.alpha = Math.max(0, this.aoa);
     c.rate = 0;
-    c.hold = 0;
+    c.closing = false;
     c.heading = Math.atan2(-this.velocity.x, -this.velocity.z);
     c.path = path;
     c.bank = bank;
@@ -470,7 +456,9 @@ export class Flight {
     this.forward.set(0, 0, -1).applyQuaternion(this.quaternion);
     this.right.set(1, 0, 0).applyQuaternion(this.quaternion);
     this.up.set(0, 1, 0).applyQuaternion(this.quaternion);
-    if (control.cobra) this.startCobra();
+    const cobraInput = this.airbrake && control.pitch >= COBRA.pull && !this.onGround;
+    if (cobraInput && !this.cobraInput) this.startCobra();
+    this.cobraInput = cobraInput;
     const asymmetry = this.updateEngines(dt, control);
     // Differential thrust adds yaw authority while both engines of a twin run.
     const differential =
@@ -478,7 +466,7 @@ export class Flight {
         ? MathUtils.smoothstep(this.spool[0] + this.spool[1], 0.1, 0.8)
         : 0;
     if (this.onGround) this.stepGround(dt, control, differential);
-    else if (this.cobraState.active) this.stepCobra(dt);
+    else if (this.cobraState.active) this.stepCobra(dt, control);
     else this.stepAir(dt, control, asymmetry, differential);
     if (!this.onGround && !this.crashed && this.velocity.y < 0) this.checkTouchdown();
     // Load factor: acceleration plus gravity, projected on the aircraft's up axis.
@@ -570,20 +558,30 @@ export class Flight {
       this.onTouchdown?.(sink);
     } else this.crashed = true;
   }
-  private stepCobra(dt: number) {
+  private stepCobra(dt: number, control: Controls) {
     const c = this.cobraState;
-    const sm = this.traits.supermanoeuvre;
-    if (c.phase === 0 && c.alpha >= c.peak - 1 * DEG) c.phase = 1;
-    if (c.phase === 1 && (c.hold += dt) > 0.05 + 0.1 * sm) c.phase = 2;
-    const desired =
-      c.phase === 1
-        ? 0
-        : MathUtils.clamp(((c.phase === 0 ? c.peak : 0) - c.alpha) * 7, -c.rateDown, c.rateUp);
-    c.rate = MathUtils.damp(c.rate, desired, 9, dt);
+    let v = this.speed;
+    // Pitch torque balance (rad/s²). The tail's control power and the airframe's
+    // weathervane stability both scale with dynamic pressure; vectored nozzles
+    // add power that does not, so they keep rotating the nose once the jet has
+    // slowed. Stability pulls the nose toward the airflow: back down below 180°,
+    // on round to 360° above it, which is what completes a kulbit.
+    const q = Math.max(0.15, this.density * (v / 150) ** 2);
+    const output = this.engines.reduce((sum, e) => sum + e.output, 0) / this.engines.length;
+    const authority =
+      COBRA.control * this.traits.supermanoeuvre * q +
+      (this.traits.thrustVectoring ? COBRA.vectoring * (0.4 + 0.6 * output) : 0);
+    if (c.alpha > COBRA.closing) c.closing = true;
+    // Full authority from half stick, so the lowest sensitivity setting still flies it.
+    const pull = c.closing ? 0 : MathUtils.clamp(control.pitch / 0.5, 0, 1);
+    // Released, the pilot (or fly-by-wire) flies the nose onto the nearer alignment: 0° or 360°.
+    const target = c.alpha < Math.PI ? 0 : 2 * Math.PI;
+    const command =
+      pull > 0 ? pull * authority : MathUtils.clamp(3 * (target - c.alpha) - 1.2 * c.rate, -1, 1) * authority;
+    c.rate += (command - COBRA.stability * q * Math.sin(c.alpha) - COBRA.damping * c.rate) * dt;
     c.alpha = Math.max(0, c.alpha + c.rate * dt);
     const sinA = Math.sin(c.alpha),
       cosA = Math.cos(c.alpha);
-    let v = this.speed;
     const f = lowSpeed(v);
     const thrust = this.totalThrust(false);
     // The fuselage and wing broadside-on to the airflow: an enormous airbrake.
@@ -592,7 +590,7 @@ export class Flight {
     v += (thrust * cosA - f * drag - form - 9.81 * Math.sin(c.path)) * dt;
     v = MathUtils.clamp(v, 45, 720);
     // Lift peaks near 45° and collapses post-stall; thrust holds the nose-high jet up.
-    const load = (v / 150) ** 2 * 1.1 * Math.max(0, Math.sin(2 * c.alpha)) * this.density;
+    const load = c.alpha < Math.PI / 2 ? (v / 150) ** 2 * 1.1 * Math.sin(2 * c.alpha) * this.density : 0;
     c.path += ((9.81 * (load - Math.cos(c.path)) + thrust * sinA * 0.35) / v) * dt;
     c.bank = MathUtils.damp(c.bank, 0, 3, dt);
     this.speed = v;
@@ -603,8 +601,9 @@ export class Flight {
     this.yaw = c.heading;
     this.roll = c.bank;
     this.quaternion.setFromEuler(this.angles.set(this.pitch, this.yaw, this.roll, "YXZ"));
-    if (c.phase === 2 && c.alpha <= 0.5 * DEG) {
-      // Back on the flight path: normal flight resumes from here.
+    // Back on the flight path, nose forward or a full turn round: normal flight resumes.
+    const off = Math.min(c.alpha, Math.abs(2 * Math.PI - c.alpha));
+    if (!pull && off < COBRA.settle && Math.abs(c.rate) < 0.6) {
       c.active = false;
       this.pitch = c.path;
       this.quaternion.setFromEuler(this.angles.set(this.pitch, this.yaw, this.roll, "YXZ"));

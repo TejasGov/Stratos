@@ -693,10 +693,8 @@ class Game {
         "ArrowRight",
         "KeyZ",
         "KeyI",
-        "KeyM",
       ];
       if (used.includes(e.code)) e.preventDefault();
-      if (!e.repeat && e.code === "KeyM") this.inputActions.tap("cobra");
       if (!e.repeat && e.code === "KeyI") this.inputActions.tap("engines");
       if (e.code === "KeyC" && !e.repeat) {
         this.cameraMode = 1 - this.cameraMode;

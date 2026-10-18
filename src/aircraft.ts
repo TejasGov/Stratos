@@ -25,7 +25,7 @@ export interface Airframe {
   engines: 1 | 2;
   /** Radar cross-section relative to a 4th-generation fighter (1); stealth shapes are far smaller. */
   rcs: number;
-  /** 0..1 post-stall authority: 1 flies a full Pugachev's cobra, low values only a shallow pitch-up. */
+  /** 0..1 post-stall control power: 1 rears the nose past the vertical in a cobra, low values only pitch up a little. */
   supermanoeuvre: number;
   thrustVectoring: boolean;
   /** Published top speed at altitude (Mach); drag climbs steeply past it. */

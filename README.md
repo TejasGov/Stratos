@@ -75,7 +75,8 @@ Every image is a real-time frame from the game (photo mode or the title cinemati
   the valleys get much closer. Heat-seekers can be decoyed by magnesium flare salvos.
 - **People on the ground.** Mixamo-animated soldiers and ground crew drill, jog, chat, patrol
   and salute at both bases; Blackridge's guards fall when their installation is destroyed.
-- **Supermanoeuvres and damage.** Pugachev's cobra scaled by each airframe's agility, airbrake,
+- **Supermanoeuvres and damage.** A physics-driven cobra (airbrake plus a hard pull) that turns
+  into a full 360° kulbit in thrust-vectoring jets, airbrake,
   engine shutdown and relight, differential thrust on twin-engine jets, and missile hits that
   set one engine on fire and then the other.
 - **A fighter HUD.** Conformal pitch ladder, flight-path marker, speed/altitude tapes, Mach, G,
@@ -205,7 +206,7 @@ browser.
 | **Shift / Ctrl**          | Increase / decrease thrust               |
 | **Space**                 | Afterburner                              |
 | **Z** — hold              | Airbrake; wheel brakes on the ground     |
-| **M**                     | Pugachev's cobra (110–190 m/s)           |
+| **Z** + pull (**W**)      | Cobra; hold the pull for a 360° kulbit   |
 | **I**                     | Engine master: shut down / relight       |
 | **C**                     | Chase / forward camera                   |
 | **P**                     | Photo mode                               |
@@ -232,7 +233,7 @@ Combat keys are remappable. If G is assigned to a weapon action, use the HUD but
 | X / Y                    | Countermeasure / cycle target |
 | LB                       | Afterburner                   |
 | RB                       | Airbrake / wheel brakes       |
-| Left stick — press       | Cobra                         |
+| RB + left stick back     | Cobra / kulbit                |
 
 Standard gamepad mappings have automated coverage; physical devices and HOTAS support still need
 hardware testing. Gamepad B fires a missile; keyboard B starts a patrol.

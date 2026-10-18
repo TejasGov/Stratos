@@ -8,3 +8,4 @@ meshy_output/
 .env.*
 !.env.example
 .mixamo-src/
+trailer-out/
