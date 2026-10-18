@@ -64,10 +64,10 @@ export function createUI() {
     .querySelector("#controls .control-list")!
     .insertAdjacentHTML(
       "beforeend",
-      `<span><kbd>G</kbd> Toggle target follow (Easy mode)</span><span><kbd>LEFT CLICK</kbd> Cannon</span><span><kbd>RIGHT CLICK</kbd> Missile — tap to queue while locking</span><span><kbd>Z</kbd> Airbrake in the air · wheel brakes on the runway</span><span><kbd>M</kbd> Pugachev's cobra (110–190 m/s, wings level)</span><span><kbd>I</kbd> Engines off / relight (3 s spool-up)</span>`,
+      `<span><kbd>G</kbd> Toggle target follow (Easy mode)</span><span><kbd>LEFT CLICK</kbd> Cannon</span><span><kbd>RIGHT CLICK</kbd> Missile — tap to queue while locking</span><span><kbd>Z</kbd> Airbrake in the air · wheel brakes on the runway</span><span><kbd>Z</kbd> + <kbd>W</kbd> Cobra: brake and pull hard (110–190 m/s, wings level); keep pulling for a full 360° in a thrust-vectoring jet</span><span><kbd>I</kbd> Engines off / relight (3 s spool-up)</span>`,
     );
   document.querySelector("#controls .dialog-note")!.textContent +=
-    " The AIM circle shows where to lead your cannon shots. Advanced controls in Settings restore full aerobatics. Twin-engine jets steer with differential thrust: rudder and hard rolling turns throttle one engine back for faster yaw, and they fly home on one engine. Gamepad: RB airbrake, left-stick click cobra.";
+    " The AIM circle shows where to lead your cannon shots. Advanced controls in Settings restore full aerobatics. Twin-engine jets steer with differential thrust: rudder and hard rolling turns throttle one engine back for faster yaw, and they fly home on one engine. Gamepad: RB airbrake; RB with the stick pulled back flies the cobra.";
 }
 export const el = <T extends HTMLElement = HTMLElement>(id: string) =>
   document.getElementById(id) as T;

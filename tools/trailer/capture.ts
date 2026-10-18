@@ -250,8 +250,9 @@ export const SHOTS: Shot[] = [
       fly(g, -900, 1600, -2500, 0, 150);
     },
     update(g, t) {
-      if (Math.abs(t - 0.35) < 0.017) g.keys.add("KeyM");
-      else g.keys.delete("KeyM");
+      // Airbrake and a hard pull for one second: a classic cobra.
+      if (t > 0.35 && t < 1.35) keys(g, "KeyZ", "KeyW");
+      else keys(g);
     },
     camera: (g) => {
       const p = g.flight.position;

@@ -86,43 +86,65 @@ test("without rotation the jet stays glued to the runway; wheel brakes stop it",
   assert.equal(f.crashed, false);
 });
 
-test("Pugachev's cobra: deep for a supermanoeuvrable jet, shallow for a 3rd-generation one", () => {
-  for (const mode of ["assisted", "advanced"] as const) {
-    const results: Record<string, { peak: number; dAlt: number; bleed: number; time: number }> = {};
-    for (const [id, sm] of [
-      ["su57", 1],
-      ["mig21", 0.3],
-    ] as const) {
-      const f = jet(id, { supermanoeuvre: sm });
-      f.controlMode = mode;
-      cruising(f, 160, 0.3);
-      const y0 = f.position.y,
-        v0 = f.speed;
-      f.step(step, { ...neutral, cobra: true });
-      assert.equal(f.cobraActive, true);
-      let peak = 0,
-        time = 0;
-      while (f.cobraActive && time < 5) {
-        f.step(step, { ...neutral, pitch: 1, roll: 1 });
-        time += step;
-        peak = Math.max(peak, f.aoa);
-        if (f.aoa > 34 * DEG) assert.equal(f.postStall, true);
-      }
-      results[id] = { peak, dAlt: f.position.y - y0, bleed: 1 - f.speed / v0, time };
-      // Normal flight resumes on the flight path.
-      for (let i = 0; i < 60; i++) f.step(step, neutral);
-      assert.equal(f.crashed, false);
-      assert.equal(f.postStall, false);
-    }
-    const su57 = results.su57,
-      mig21 = results.mig21;
-    assert.ok(su57.peak > 90 * DEG && su57.peak < 125 * DEG, `peak ${su57.peak / DEG}`);
-    assert.ok(mig21.peak < 45 * DEG && mig21.peak > 25 * DEG, `peak ${mig21.peak / DEG}`);
-    assert.ok(Math.abs(su57.dAlt) < 50, `altitude change ${su57.dAlt}`);
-    assert.ok(su57.bleed > 0.33 && su57.bleed < 0.55, `bleed ${su57.bleed}`);
-    assert.ok(su57.time < 3, `duration ${su57.time}`);
-    assert.ok(mig21.bleed < su57.bleed);
+/** Airbrake and a hard pull at 160 m/s, the pull held for `hold` s, then hands off until normal flight resumes. */
+function cobra(id: string, hold: number, mode: Flight["controlMode"]) {
+  const f = jet(id);
+  f.controlMode = mode;
+  cruising(f, 160, 0.3);
+  const y0 = f.position.y,
+    v0 = f.speed;
+  f.step(step, { ...neutral, airbrake: true, pitch: 1 });
+  assert.equal(f.cobraActive, true, id);
+  let peak = 0,
+    time = 0;
+  while (f.cobraActive && time < 10) {
+    f.step(step, { ...neutral, pitch: time < hold ? 1 : 0 });
+    time += step;
+    peak = Math.max(peak, f.cobraAlpha);
+    if (f.aoa > 34 * DEG) assert.equal(f.postStall, true);
   }
+  const result = { peak: peak / DEG, dAlt: f.position.y - y0, bleed: 1 - f.speed / v0, time, active: f.cobraActive };
+  // Normal flight resumes on the flight path.
+  for (let i = 0; i < 60; i++) f.step(step, neutral);
+  assert.equal(f.crashed, false, id);
+  assert.equal(f.postStall, false, id);
+  return result;
+}
+
+test("airbrake + hard pull: a cobra, a 360° kulbit with thrust vectoring, a shallow pitch-up without", () => {
+  for (const mode of ["assisted", "advanced"] as const) {
+    // A one-second pull: the classic cobra, nose past the vertical and back.
+    const tap = cobra("su57", 1, mode);
+    assert.ok(tap.peak > 80 && tap.peak < 130, `cobra peak ${tap.peak}`);
+    assert.ok(Math.abs(tap.dAlt) < 50, `cobra altitude change ${tap.dAlt}`);
+    assert.ok(tap.bleed > 0.3 && tap.bleed < 0.6, `cobra bleed ${tap.bleed}`);
+    assert.ok(tap.time < 3.5, `cobra duration ${tap.time}`);
+    // Held: vectored nozzles keep the nose turning past 180° and stability carries it round.
+    for (const id of ["su57", "f22", "su30"]) {
+      const kulbit = cobra(id, 10, mode);
+      assert.equal(kulbit.active, false, `${id} kulbit ends`);
+      assert.ok(kulbit.peak > 340, `${id} kulbit ${kulbit.peak}`);
+      assert.ok(kulbit.time < 5, `${id} kulbit duration ${kulbit.time}`);
+      assert.ok(kulbit.dAlt > -100, `${id} kulbit altitude change ${kulbit.dAlt}`);
+    }
+    // Without vectoring the tail runs out of authority well short of a loop.
+    const rafale = cobra("rafale", 3, mode);
+    assert.ok(rafale.peak > 40 && rafale.peak < 80, `rafale peak ${rafale.peak}`);
+    const mig21 = cobra("mig21", 1.5, mode);
+    assert.ok(mig21.peak > 15 && mig21.peak < 40, `mig21 peak ${mig21.peak}`);
+  }
+});
+
+test("the cobra needs the airbrake and the pull together", () => {
+  const f = jet("su57");
+  cruising(f, 160);
+  for (let i = 0; i < 30; i++) f.step(step, { ...neutral, airbrake: true });
+  assert.equal(f.cobraActive, false);
+  cruising(f, 160);
+  for (let i = 0; i < 30; i++) f.step(step, { ...neutral, pitch: 1 });
+  assert.equal(f.cobraActive, false);
+  f.step(step, { ...neutral, pitch: 1, airbrake: true });
+  assert.equal(f.cobraActive, true);
 });
 
 test("the cobra is refused outside its speed window with a pilot hint", () => {
