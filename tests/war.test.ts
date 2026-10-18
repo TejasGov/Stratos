@@ -159,3 +159,44 @@ test("war: wingmen fight bandits and can be shot down", () => {
   assert.equal(viper3.active, false);
   assert.equal(system.status.wingmen, 1);
 });
+
+test("mid-air collisions destroy both aircraft; a near miss does not", () => {
+  // Player into a bandit: both go down and the sortie fails as a collision.
+  let system = new CombatSystem();
+  let p = player();
+  system.start("intercept", p);
+  const first = system.enemies.find((e) => e.kind === "air")!;
+  first.position.copy(p.position).add(new Vector3(0, 1, -4));
+  first.previous.copy(first.position);
+  run(system, p, 1 / 60, combatNeutral, flatWorld);
+  assert.equal(first.active, false);
+  assert.equal(system.playerHealth, 0);
+  assert.equal(system.midair, true);
+  assert.ok(system.drainEvents().some((e) => e.type === "explosion"));
+
+  // Two AI jets into each other, well away from the player.
+  system = new CombatSystem();
+  p = player();
+  system.start("intercept", p);
+  const [a, b] = system.enemies.filter((e) => e.kind === "air");
+  a.position.set(3000, 2500, -3000);
+  a.previous.copy(a.position);
+  b.position.copy(a.position).add(new Vector3(3, 0, 0));
+  b.previous.copy(b.position);
+  run(system, p, 1 / 60, combatNeutral, flatWorld);
+  assert.equal(a.active, false);
+  assert.equal(b.active, false);
+  assert.equal(system.playerHealth, 100);
+  assert.equal(system.midair, false);
+
+  // Forty metres apart is a pass, not a collision.
+  system = new CombatSystem();
+  p = player();
+  system.start("intercept", p);
+  const passing = system.enemies.find((e) => e.kind === "air")!;
+  passing.position.copy(p.position).add(new Vector3(40, 0, 0));
+  passing.previous.copy(passing.position);
+  run(system, p, 1 / 60, combatNeutral, flatWorld);
+  assert.equal(passing.active, true);
+  assert.equal(system.playerHealth, 100);
+});

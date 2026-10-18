@@ -1312,7 +1312,9 @@ class Game {
           this.comms.clear();
           this.comms.say("crash", 1.6);
           el("crash-message").textContent =
-            this.combat.playerHealth <= 0
+            this.combat.midair
+              ? "Mid-air collision. Give other aircraft more room."
+              : this.combat.playerHealth <= 0
               ? "Aircraft lost in combat. Restart the sortie and try a different approach."
               : this.flight.onGround || overRunway(this.flight.position)
                 ? "Runway excursion or hard landing. Keep it on the centreline: under 5 m/s sink, wings level."

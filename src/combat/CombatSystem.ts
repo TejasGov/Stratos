@@ -199,6 +199,8 @@ export const WAR_WAYPOINTS = [
   { x: 1300, z: -7100 },
 ] as const;
 /** An ingress marker counts when passed this close and this low (m above ground). */
+/** The player's hull radius for mid-air collisions (m); entities use half their hit radius. */
+export const MIDAIR_HULL = 6;
 export const WAR_GATE = { radius: 500, ceiling: 450 };
 /** Viper flight: the player's two AI wingmen. */
 export const WINGMAN_IDS = [-2, -3] as const;
@@ -290,6 +292,8 @@ export class CombatSystem implements DefenseHost {
   completed = false;
   failed = false;
   playerHealth = 100;
+  /** The player's jet was lost to a mid-air collision this sortie. */
+  midair = false;
   enemies: CombatEntity[] = [];
   ally: CombatEntity | null = null;
   /** Radar cross-section of the player's airframe (set by the parent). */
@@ -382,6 +386,7 @@ export class CombatSystem implements DefenseHost {
   private grace: number = SORTIE.grace;
   private limit: number = SORTIE.limits.intercept;
   private desired = new Vector3();
+  private airborne: (CombatEntity | CombatPlayer)[] = [];
   private direction = new Vector3();
   private forward = new Vector3();
   private point = new Vector3();
@@ -823,6 +828,7 @@ export class CombatSystem implements DefenseHost {
     this.patrol = false;
     this.completed = this.failed = false;
     this.playerHealth = 100;
+    this.midair = false;
     this.enemies.length = 0;
     this.ally = null;
     this.selected = 0;
@@ -919,6 +925,7 @@ export class CombatSystem implements DefenseHost {
     if (this.ally?.active) this.updateAlly(dt, query);
     for (let i = 0; i < this.wingmen.length; i++)
       if (this.wingmen[i].active) this.updateWingman(this.wingmen[i], i, dt, player, query);
+    this.collide(player);
     const sensed = this.sensed;
     sensed.position = player.position;
     sensed.velocity = player.velocity;
@@ -995,7 +1002,7 @@ export class CombatSystem implements DefenseHost {
     this.previousInput.bomb = !!input.bomb;
     this.updateWarning(player);
     if (this.playerHealth <= 0)
-      this.finish(false, player.position, "Aircraft destroyed");
+      this.finish(false, player.position, this.midair ? "Mid-air collision" : "Aircraft destroyed");
     else if (this.active === "escort" && this.ally && !this.ally.active)
       this.finish(false, this.ally.position, "Transport lost");
     else if (
@@ -1680,6 +1687,44 @@ export class CombatSystem implements DefenseHost {
         m.active = false;
       }
     }
+  }
+  /**
+   * Mid-air collisions: any two airborne jets (player, bandits, wingmen, the
+   * transport) whose swept paths come within their combined hull radii both go
+   * down in one fireball.
+   */
+  private collide(player: CombatPlayer) {
+    const jets = this.airborne;
+    jets.length = 0;
+    if (!player.onGround) jets.push(player);
+    for (const e of this.enemies) if (e.active && e.kind === "air") jets.push(e);
+    if (this.ally?.active) jets.push(this.ally);
+    for (const w of this.wingmen) if (w.active) jets.push(w);
+    for (let i = 0; i < jets.length; i++)
+      for (let j = i + 1; j < jets.length; j++) {
+        const a = jets[i],
+          b = jets[j];
+        if (!this.flying(a, player) || !this.flying(b, player)) continue;
+        if (sweptClosest(a.previous, a.position, b.previous, b.position) > this.hull(a, player) + this.hull(b, player))
+          continue;
+        for (const jet of [a, b]) {
+          if (jet === player) {
+            this.midair = true;
+            this.playerHealth = 0;
+          } else {
+            (jet as CombatEntity).health = 0;
+            (jet as CombatEntity).active = false;
+          }
+        }
+        this.event("explosion", this.desired.copy(a.position).lerp(b.position, 0.5), undefined, false, 1.8, { kind: "air" });
+      }
+  }
+  /** Half the centre-to-centre distance at which two airframes touch (m). */
+  private hull(jet: CombatEntity | CombatPlayer, player: CombatPlayer) {
+    return jet === player ? MIDAIR_HULL : (jet as CombatEntity).radius * 0.5;
+  }
+  private flying(jet: CombatEntity | CombatPlayer, player: CombatPlayer) {
+    return jet === player ? this.playerHealth > 0 : (jet as CombatEntity).active;
   }
   private isGround(hit: CombatEntity | CombatPlayer) {
     return (hit as CombatEntity).kind === "ground";
