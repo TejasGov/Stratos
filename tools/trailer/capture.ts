@@ -23,6 +23,11 @@ export interface Shot {
   update?(g: Game, t: number): void;
   /** Global-space camera; omit to keep the game's own camera. */
   camera?(g: Game, t: number): { p: Vec; look: Vec; fov?: number } | null;
+  /**
+   * Simulated seconds per footage second at footage time `t` (slow motion below 1).
+   * `update` and `camera` then receive simulated time.
+   */
+  timeScale?(t: number): number;
 }
 
 const FPS = 30;
@@ -84,6 +89,30 @@ async function useAirframe(g: Game, id: string) {
   let model = airframes.get(id);
   if (!model) airframes.set(id, (model = await g.loadModel(a)));
   g.applyAirframe(a, model);
+}
+
+/** Slow motion (`speed`x) from footage second `from` to `to`, eased in and out, inside a real-time shot. */
+const slowMotion = (from: number, to: number, speed: number, ease = 0.5) => (t: number) => {
+  const inside = Math.min(T.MathUtils.smoothstep(t, from - ease, from), 1 - T.MathUtils.smoothstep(t, to, to + ease));
+  return T.MathUtils.lerp(1, speed, inside);
+};
+/** Flies `scripted` enemies straight along their velocity instead of through the AI. */
+function onRails(g: Game) {
+  const c = g.combat;
+  if (c.railed) return;
+  const ai = c.updateEnemy;
+  c.updateEnemy = function (e: any, dt: number, ...rest: unknown[]) {
+    if (!e.scripted) return ai.call(this, e, dt, ...rest);
+    e.previous.copy(e.position);
+    e.position.addScaledVector(e.velocity, dt);
+  };
+  c.railed = true;
+}
+/** The sun's horizontal direction (unit, global). */
+function sunFlat(g: Game) {
+  // Straight from the clock: the atmosphere only picks up a new hour on its next update.
+  const s = g.sky.time.update(0).sun;
+  return v(s.x, 0, s.z).normalize();
 }
 
 export const SHOTS: Shot[] = [
@@ -333,6 +362,57 @@ export const SHOTS: Shot[] = [
   },
 ];
 
+/**
+ * Dawn, backlit: a bandit closes fast on the Su-57's six, a little high. The
+ * Su-57 snaps into a cobra (airbrake and a hard pull), bleeds speed, and the
+ * bandit overshoots just over its reared nose, all in slow motion.
+ */
+let escape = { heading: 0, sun: v(1, 0, 0), along: v(0, 0, -1) };
+export const COBRA_ESCAPE: Shot = {
+  name: "16-cobra-escape",
+  seconds: 7.5,
+  preroll: 60,
+  // Real time for the snap up, 0.3x through the pass, real time for the recovery.
+  timeScale: slowMotion(1.5, 5, 0.3),
+  async setup(g) {
+    await useAirframe(g, "su57");
+    begin(g, 6.05, "fair", "intercept");
+    const sun = sunFlat(g);
+    // Fly across the sun so a camera on the far side sees the pair against it.
+    const along = v(-sun.z, 0, sun.x);
+    const heading = Math.atan2(-along.x, -along.z);
+    escape = { heading, sun, along };
+    fly(g, -900, 900, -2500, heading, 165);
+    g.flight.throttle = 0.5;
+    const c = g.combat;
+    const bandits = c.enemies.filter((e: any) => e.kind === "air");
+    bandits.forEach((e: any, i: number) => (e.active = i === 0));
+    const bandit = bandits[0];
+    bandit.position.copy(g.flight.position).addScaledVector(along, -ESCAPE.behind).add(v(0, ESCAPE.high, 0));
+    bandit.previous.copy(bandit.position);
+    bandit.quaternion.setFromEuler(new T.Euler(0, heading, 0, "YXZ"));
+    bandit.velocity.copy(along).multiplyScalar(ESCAPE.banditSpeed);
+    bandit.scripted = true;
+    onRails(g);
+  },
+  update(g, t) {
+    // Airbrake and a hard pull for one second: the classic cobra.
+    if (t > ESCAPE.cobraAt && t < ESCAPE.cobraAt + 1) keys(g, ...(t < ESCAPE.cobraAt + 0.1 ? ["KeyZ", "KeyW"] : ["KeyW"]));
+    else keys(g);
+  },
+  camera: (g, t) => {
+    // Down-sun of the pair, looking into the low sun, drifting with the jet.
+    const p = g.flight.position;
+    return {
+      p: p.clone().addScaledVector(escape.sun, -85).addScaledVector(escape.along, -14 + t * 3).add(v(0, -7, 0)),
+      look: p.clone().addScaledVector(escape.along, -6).add(v(0, 6, 0)),
+      fov: 26,
+    };
+  },
+};
+// The cobra lifts the Su-57 about 36 m, so a bandit 20 m high would have hit it; instead it passes under the tail.
+const ESCAPE = { behind: 160, high: 20, banditSpeed: 215, cobraAt: 0.9 };
+
 /** Steps the game at 30 fps and posts each 1080p frame; returns frames written per shot. */
 export async function capture(g: Game, shots: Shot[] = SHOTS, receiver = "http://127.0.0.1:8788", every = 1) {
   g.renderer.setAnimationLoop(null);
@@ -379,10 +459,13 @@ export async function capture(g: Game, shots: Shot[] = SHOTS, receiver = "http:/
     g.state = "flight";
     const frames = Math.round(shot.seconds * FPS);
     written[shot.name] = 0;
+    let simTime = 0;
     for (let i = 0; i < frames; i++) {
-      shotTime = i / FPS;
+      shotTime = simTime;
       shot.update?.(g, shotTime);
-      step();
+      const scale = shot.timeScale?.(i / FPS) ?? 1;
+      g.frame((clock += (1000 / FPS) * scale));
+      simTime += scale / FPS;
       if (i % every) continue;
       // toBlob snapshots the canvas now and encodes in the background: keep a few in flight.
       const name = `${receiver}/${shot.name}/${i}`;
