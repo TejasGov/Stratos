@@ -200,3 +200,19 @@ test("mid-air collisions destroy both aircraft; a near miss does not", () => {
   assert.equal(passing.active, true);
   assert.equal(system.playerHealth, 100);
 });
+
+test("war: in the bombing phase Viper flight bombs the SAM sites and targets", () => {
+  // The player orbits high over the sea, out of the fight; only the wingmen strike.
+  const p = player(0, 4000, 0);
+  const system = new CombatSystem();
+  system.start("war", p);
+  run(system, p, 4);
+  clearAir(system);
+  (system as unknown as { warPhase: number }).warPhase = 2;
+  const standing = () =>
+    system.enemies.filter((e) => e.active && e.kind === "ground" && (e.role.startsWith("sam") || e.role === "target")).length;
+  const before = standing();
+  run(system, p, 90);
+  assert.ok(system.wingBombs[0] < BOMB.ammo.wingman && system.wingBombs[1] < BOMB.ammo.wingman, `bombs ${system.wingBombs}`);
+  assert.ok(standing() <= before - 2, `ground targets ${before} -> ${standing()}`);
+});
