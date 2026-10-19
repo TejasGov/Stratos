@@ -172,7 +172,8 @@ can be shot down. The operation runs in four phases:
 1. **Intercept.** Clear three bandits coming down from Blackridge.
 2. **Ingress.** Fly through three lit markers up the eastern channel, under 450 m, below the
    battery radar.
-3. **Bombing.** Release bombs with **N** when the **BOMB** pipper sits on the Blackridge radar,
+3. **Bombing.** Viper 2 bombs the SAM sites and Viper 3 the targets (three bombs each). Release
+   yours with **N** when the **BOMB** pipper sits on the Blackridge radar,
    fuel farm and shelters (eight bombs).
 4. **Counterattack.** Four more bandits come in from 15 km north; hold the line.
 

@@ -201,11 +201,13 @@ export const WAR_WAYPOINTS = [
 /** An ingress marker counts when passed this close and this low (m above ground). */
 /** The player's hull radius for mid-air collisions (m); entities use half their hit radius. */
 export const MIDAIR_HULL = 6;
+/** Height above the target a wingman runs in at for a level bomb release (m). */
+const WING_BOMB_HEIGHT = 320;
 export const WAR_GATE = { radius: 500, ceiling: 450 };
 /** Viper flight: the player's two AI wingmen. */
 export const WINGMAN_IDS = [-2, -3] as const;
 /** Bomb burst: full damage at the centre, nothing beyond the radius. */
-export const BOMB = { damage: 190, radius: 110, ammo: { war: 8, strike: 6 } };
+export const BOMB = { damage: 190, radius: 110, ammo: { war: 8, strike: 6, wingman: 3 } };
 
 /** Escort corridor: up the west coast, brushing the edge of the northern defences. */
 export const ESCORT_ROUTE = [
@@ -355,6 +357,8 @@ export class CombatSystem implements DefenseHost {
     velocity: new Vector3(),
   }));
   bombAmmo = 0;
+  /** Bombs left per Viper wingman for the war bombing phase. */
+  wingBombs = [0, 0];
   private bombCooldown = 0;
   private marker = new Vector3();
   /** War: the ingress marker to fly through next (global, 160 m above the ground), or null. */
@@ -386,6 +390,7 @@ export class CombatSystem implements DefenseHost {
   private grace: number = SORTIE.grace;
   private limit: number = SORTIE.limits.intercept;
   private desired = new Vector3();
+  private impact = new Vector3();
   private airborne: (CombatEntity | CombatPlayer)[] = [];
   private direction = new Vector3();
   private forward = new Vector3();
@@ -693,6 +698,7 @@ export class CombatSystem implements DefenseHost {
     this.fighter(3, 700, 3100, -9300, Math.PI, home);
     this.addStrikeTargets();
     this.bombAmmo = BOMB.ammo.war;
+    this.wingBombs = [BOMB.ammo.wingman, BOMB.ammo.wingman];
     WINGMAN_IDS.forEach((id, i) => {
       const w = this.entity(id, `VIPER ${i + 2}`, "ally", new Vector3(), "fighter");
       w.active = false;
@@ -1263,8 +1269,15 @@ export class CombatSystem implements DefenseHost {
           target = e;
         }
       }
+    // Bombing phase: Viper 2 goes for the SAM sites, Viper 3 for the targets, unless a bandit is close.
+    const strike = best > 3000 ? this.wingStrike(slot, w) : null;
+    if (strike) target = null;
     let speed: number;
-    if (target) {
+    if (strike) {
+      const g = this.ground(strike.position.x, strike.position.z, query);
+      this.desired.set(strike.position.x, g + WING_BOMB_HEIGHT, strike.position.z).sub(w.position).normalize();
+      speed = 200;
+    } else if (target) {
       this.desired
         .copy(target.position)
         .addScaledVector(target.velocity, Math.min(2, best / 650))
@@ -1287,7 +1300,7 @@ export class CombatSystem implements DefenseHost {
     const ahead = this.aim.copy(w.position).addScaledVector(this.forward, w.speed * 2.5);
     const clearance =
       Math.max(this.ground(w.position.x, w.position.z, query), this.ground(ahead.x, ahead.z, query)) +
-      (target ? 220 : 90);
+      (target ? 220 : strike ? 150 : 90);
     if (w.position.y < clearance) this.desired.setY(Math.max(this.desired.y, 0.6)).normalize();
     w.speed = MathUtils.damp(w.speed, speed, 1.2, dt);
     this.targetQuaternion.setFromUnitVectors(this.localForward, this.desired);
@@ -1297,6 +1310,7 @@ export class CombatSystem implements DefenseHost {
     w.position.addScaledVector(w.velocity, dt);
     const floor = this.ground(w.position.x, w.position.z, query) + 25;
     if (w.position.y < floor) w.position.y = floor;
+    if (strike) return this.wingBomb(w, slot, strike, query);
     if (!target || !this.weaponsFree) return;
     this.desired.copy(target.position).sub(w.position).normalize();
     const aligned = this.desired.dot(this.direction);
@@ -1305,6 +1319,39 @@ export class CombatSystem implements DefenseHost {
       w.cooldown = 16 + this.random() * 8;
     } else if (best < 800 && aligned > 0.985 && w.stateTime % 0.9 < dt)
       this.fireGun(w.position, this.direction, false, w.id);
+  }
+  /** A wingman's ground objective in the war bombing phase, or null. */
+  private wingStrike(slot: number, w: CombatEntity) {
+    if (this.active !== "war" || this.warPhase !== 2 || !this.wingBombs[slot]) return null;
+    const wanted = (e: CombatEntity) => (slot === 0 ? e.role.startsWith("sam") : e.role === "target");
+    let pick: CombatEntity | null = null,
+      best = Infinity;
+    // Prefer the slot's job; fall back to anything still standing.
+    for (const pass of [true, false]) {
+      for (const e of this.enemies)
+        if (e.active && e.kind === "ground" && (!pass || wanted(e)) && (pass || e.role.startsWith("sam") || e.role === "target")) {
+          const d = e.position.distanceToSquared(w.position);
+          if (d < best) {
+            best = d;
+            pick = e;
+          }
+        }
+      if (pick) return pick;
+    }
+    return null;
+  }
+  /** Releases a bomb when the bomb pipper's ballistic solution falls on the target. */
+  private wingBomb(w: CombatEntity, slot: number, strike: CombatEntity, query?: CombatQuery) {
+    if (w.cooldown > 0 || !this.bombImpact(w as unknown as CombatPlayer, this.impact, query)) return;
+    if (Math.hypot(this.impact.x - strike.position.x, this.impact.z - strike.position.z) > BOMB.radius * 0.4) return;
+    const b = this.bombs.find((x) => !x.active);
+    if (!b) return;
+    b.active = true;
+    b.position.copy(w.position).y -= 2.5;
+    b.previous.copy(b.position);
+    b.velocity.copy(w.velocity);
+    this.wingBombs[slot]--;
+    w.cooldown = 2;
   }
   /** War phases: wingmen join after takeoff; each phase unlocks the next. */
   private updateWar(player: CombatPlayer, query?: CombatQuery) {
