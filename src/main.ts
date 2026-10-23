@@ -2326,13 +2326,13 @@ class Game {
         1.3,
       );
       // Z is the airbrake; older saves that bound it fall back to the defaults.
-      const allowed = /^Key[FXTVGHJK]$/;
+      const allowed = /^Key[FXTVNGHJK]$/;
       const next = { ...defaultBindings, ...s.bindings };
       if (
         (Object.keys(defaultBindings) as CombatAction[]).every((action) =>
           allowed.test(next[action]),
         ) &&
-        new Set(Object.values(next)).size === 4
+        new Set(Object.values(next)).size === Object.keys(defaultBindings).length
       )
         this.inputActions.bindings = next;
       this.updateDiscovery();
