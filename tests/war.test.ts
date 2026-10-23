@@ -216,3 +216,51 @@ test("war: in the bombing phase Viper flight bombs the SAM sites and targets", (
   assert.ok(system.wingBombs[0] < BOMB.ammo.wingman && system.wingBombs[1] < BOMB.ammo.wingman, `bombs ${system.wingBombs}`);
   assert.ok(standing() <= before - 2, `ground targets ${before} -> ${standing()}`);
 });
+
+test("war checkpoints: each phase saves progress and a fresh sortie resumes from it", () => {
+  const p = player(0, 600, 0);
+  const system = new CombatSystem();
+  system.start("war", p);
+  assert.equal(system.checkpoint, null);
+  run(system, p, 8);
+  clearAir(system);
+  run(system, p, 0.2);
+  assert.equal(system.checkpoint?.phase, 1);
+  // Lose Viper 3 and a SAM site, spend a bomb, then finish the valley run.
+  system.wingmen[1].active = false;
+  system.bombAmmo--;
+  for (const wp of WAR_WAYPOINTS) {
+    hover(system, p, wp.x, wp.z);
+    run(system, p, 0.2);
+  }
+  const checkpoint = system.checkpoint!;
+  assert.equal(checkpoint.phase, 2);
+  assert.deepEqual(checkpoint.wingmen, [true, false]);
+  assert.equal(checkpoint.bombs, BOMB.ammo.war - 1);
+  const sams = system.enemies.filter((e) => e.role.startsWith("sam")).map((e) => e.id);
+  assert.ok(sams.length && sams.every((id) => checkpoint.destroyed.includes(id)));
+
+  // Shot down; the retry starts a fresh sortie and resumes at the bombing phase.
+  const q = player(checkpoint.x, 600, checkpoint.z);
+  const retry = new CombatSystem();
+  retry.start("war", q);
+  retry.resumeWar(q, checkpoint);
+  assert.equal(retry.warPhase, 2);
+  assert.equal(retry.waypoint, WAR_WAYPOINTS.length);
+  assert.equal(retry.bombAmmo, BOMB.ammo.war - 1);
+  assert.equal(retry.weaponsFree, false, "a short grace after the resume");
+  run(retry, q, 6.2);
+  assert.ok(retry.weaponsFree);
+  assert.equal(retry.warPhase, 2);
+  assert.deepEqual(retry.wingmen.map((w) => w.active), [true, false]);
+  assert.ok(retry.enemies.every((e) => !(e.kind === "air" && e.active)), "first wave already cleared");
+  assert.ok(retry.enemies.filter((e) => sams.includes(e.id)).every((e) => !e.active));
+  assert.ok(retry.enemies.some((e) => e.role === "target" && e.active));
+
+  // A phase-3 checkpoint brings the counterattack straight back.
+  const late = new CombatSystem();
+  late.start("war", q);
+  late.resumeWar(q, { ...checkpoint, phase: 3 });
+  assert.equal(late.warPhase, 3);
+  assert.equal(late.enemies.filter((e) => e.kind === "air" && e.active).length, 4);
+});

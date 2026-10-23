@@ -38,7 +38,7 @@ import {
   airframeScale,
   type Airframe,
 } from "./aircraft";
-import { CombatSystem, type CombatMission } from "./combat/CombatSystem";
+import { CombatSystem, type CombatMission, type WarCheckpoint } from "./combat/CombatSystem";
 import { CombatView } from "./combat/CombatView";
 import { HOME_UMBRELLA, SAM_RULES, radarDetectionRange } from "./combat/AirDefense";
 
@@ -500,8 +500,16 @@ class Game {
       .querySelectorAll<HTMLButtonElement>("[data-combat]")
       .forEach((button) => {
         button.onclick = () =>
-          this.start(undefined, button.dataset.combat as CombatMission);
+          button.dataset.combat === "war"
+            ? el<HTMLDialogElement>("war-mode").showModal()
+            : this.start(undefined, button.dataset.combat as CombatMission);
       });
+    for (const mode of ["checkpoint", "pro"] as const)
+      el(`war-${mode}`).onclick = () => {
+        this.warMode = mode;
+        el<HTMLDialogElement>("war-mode").close();
+        this.start(undefined, "war");
+      };
     document
       .querySelectorAll<HTMLButtonElement>("[data-challenge]")
       .forEach((button) => {
@@ -652,6 +660,13 @@ class Game {
       }
       if (Object.values(this.inputActions.bindings).includes(e.code))
         e.preventDefault();
+      // Say why the bomb key did nothing instead of failing silently.
+      if (e.code === this.inputActions.bindings.bomb && !e.repeat && this.intro <= 0) {
+        const carried = this.combat.active === "war" || this.combat.active === "strike";
+        if (!carried) this.toast("Bombs are carried on War and Ground strike sorties.", "BOMBS");
+        else if (this.flight.onGround) this.toast("Bombs arm once you are airborne.", "BOMBS");
+        else if (!this.combat.status.bombs) this.toast("Out of bombs.", "BOMBS");
+      }
       if (e.code === "KeyB" && !e.repeat) {
         if (this.combat.active) {
           this.combat.stop();
@@ -789,7 +804,30 @@ class Game {
     }
     const route = this.mission.active;
     const combatMission = this.combat.active;
+    const checkpoint = combatMission === "war" && this.warMode === "checkpoint" ? this.combat.checkpoint : null;
     this.start(route ?? undefined, combatMission ?? undefined);
+    if (checkpoint) this.resumeWar(checkpoint);
+  }
+  /** Checkpoint mode: back in the air where the War phase began, progress restored. */
+  private resumeWar(checkpoint: WarCheckpoint) {
+    const f = this.flight;
+    const { x, z, heading, speed } = checkpoint;
+    f.reset({ x, z });
+    // Level flight, well clear of the ground, even if the phase began in a low dive.
+    f.position.y = Math.max(checkpoint.y, renderedHeightAt(x, z) + 200);
+    f.previous.copy(f.position);
+    f.yaw = heading;
+    f.quaternion.setFromEuler(new T.Euler(0, heading, 0, "YXZ"));
+    f.previousQuaternion.copy(f.quaternion);
+    f.velocity.set(-Math.sin(heading), 0, -Math.cos(heading)).multiplyScalar(speed);
+    f.speed = speed;
+    f.throttle = 0.8;
+    this.intro = 0;
+    this.liftedOffAt = this.time;
+    this.groundCamera = 0;
+    this.cameraReady = false;
+    this.combat.resumeWar(f, checkpoint);
+    this.toast(`Resuming at phase ${checkpoint.phase + 1} of 4`, "CHECKPOINT");
   }
   /** Ascent: from brake release on Haven's runway to the edge of space. */
   private startAscent() {
@@ -894,6 +932,8 @@ class Game {
   private intro = 0;
   /** Game time of this sortie's liftoff (-1 before it). */
   private liftedOffAt = -1;
+  /** War sortie: one life (pro) or resume from the last phase reached. */
+  private warMode: "pro" | "checkpoint" = "pro";
   private coachShown = "";
   private pathEuler = new T.Euler();
   private cameraRotation = new T.Quaternion();
@@ -1319,6 +1359,8 @@ class Game {
               : this.flight.onGround || overRunway(this.flight.position)
                 ? "Runway excursion or hard landing. Keep it on the centreline: under 5 m/s sink, wings level."
                 : "Terrain impact. Clear skies are just one takeoff away.";
+          const checkpoint = this.combat.active === "war" && this.warMode === "checkpoint" ? this.combat.checkpoint : null;
+          if (checkpoint) el("crash-message").textContent += ` Fly again from phase ${checkpoint.phase + 1} of 4.`;
           this.setState("crashed");
           break;
         }
@@ -1638,6 +1680,9 @@ class Game {
         this.rwrAudio.launch = this.time;
       } else if (event.type === "gun" || event.type === "missile") {
         if (event.player) this.audio.cue(event.type);
+      } else if (event.type === "bomb") {
+        this.audio.cue("flare");
+        this.toast(`Bomb away · ${this.combat.status.bombs} left`, "BOMBS");
       } else if (event.type === "flare") {
         // Cartridges leave the rear fuselage along the jet's body axes.
         this.flareForward.set(0, 0, -1).applyQuaternion(this.flight.quaternion);
