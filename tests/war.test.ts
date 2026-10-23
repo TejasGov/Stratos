@@ -80,6 +80,7 @@ test("war: Viper flight joins after takeoff and every phase unlocks the next", (
   // Phase 3: bombs released over each target destroy the installations.
   for (const t of BLACKRIDGE_TARGETS) {
     const target = system.enemies.find((e) => e.tag === t.id)!;
+    (system as unknown as { selected: number }).selected = target.id;
     for (let drop = 0; drop < 2 && target.active; drop++) {
       hover(system, p, t.x, t.z);
       p.position.y = 300;
@@ -284,4 +285,20 @@ test("war: a bomb on the selected target takes out SAMs within its blast", () =>
   run(system, p, 10, combatNeutral, flatWorld);
   assert.equal(sam.active, false);
   if (near) assert.equal(near.active, false, "neighbour inside the blast");
+});
+
+test("war: after the radar, the target box moves to the next installation on its own", () => {
+  const p = player(0, 600, -7000);
+  const system = new CombatSystem();
+  system.start("war", p);
+  run(system, p, 8);
+  clearAir(system);
+  (system as unknown as { warPhase: number }).warPhase = 2;
+  run(system, p, 0.1);
+  assert.equal(system.target?.tag, "radar");
+  assert.match(system.objective, /3 of 3 installations left/);
+  system.enemies.find((e) => e.tag === "radar")!.active = false;
+  run(system, p, 0.1);
+  assert.ok(system.target && system.target.role === "target" && system.target.tag !== "radar", `selected ${system.target?.tag}`);
+  assert.match(system.objective, /2 of 3 installations left/);
 });

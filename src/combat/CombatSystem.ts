@@ -852,10 +852,14 @@ export class CombatSystem implements DefenseHost {
   /** Fighters first; the strike radar when that is the objective. */
   private defaultTarget() {
     if (this.active === "strike" || (this.active === "war" && this.warPhase >= 2)) {
-      const radar = this.enemies.find(
-        (e) => e.active && e.kind === "ground" && e.tag === "radar",
-      );
+      // The radar first, then the nearest installation still standing, so the target box
+      // and guided bombs move on to the next objective by themselves.
+      const objectives = this.enemies.filter((e) => e.active && e.kind === "ground" && e.role === "target");
+      const radar = objectives.find((e) => e.tag === "radar");
       if (radar) return radar.id;
+      const p = this.player?.position;
+      if (objectives.length && p)
+        return objectives.reduce((a, b) => (a.position.distanceTo(p) <= b.position.distanceTo(p) ? a : b)).id;
     }
     return this.enemies.find((e) => e.active && e.kind === "air")?.id ?? 0;
   }
@@ -1403,7 +1407,11 @@ export class CombatSystem implements DefenseHost {
         this.objective = `WAR · 2/4 · Fly low through the valley markers (${this.waypoint}/${WAR_WAYPOINTS.length}) · under ${WAR_GATE.ceiling} m`;
         if (this.waypoint >= WAR_WAYPOINTS.length) this.enterWarPhase(2, player);
       }
-    } else if (this.warPhase === 2 && !this.enemies.some((e) => e.active && e.role === "target")) this.enterWarPhase(3, player);
+    } else if (this.warPhase === 2) {
+      const left = this.enemies.filter((e) => e.active && e.role === "target").length;
+      if (!left) this.enterWarPhase(3, player);
+      else this.objective = `WAR · 3/4 · Bomb Blackridge · ${left} of ${BLACKRIDGE_TARGETS.length} installations left`;
+    }
   }
   /** Viper flight forms up beside the leader (dead wingmen stay dead on a checkpoint resume). */
   private joinWingmen(player: CombatPlayer, alive = [true, true]) {
