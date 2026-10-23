@@ -177,7 +177,9 @@ can be shot down. The operation runs in four phases:
    fuel farm and shelters (eight bombs).
 4. **Counterattack.** Four more bandits come in from 15 km north; hold the line.
 
-The minimap zooms out to 20 km for the wider battle area.
+Before take-off you choose **Checkpoints** (shot down, you fly again from the start of the phase
+you reached, with the targets, bombs and wingmen you had then) or **Pro** (one life). The minimap
+zooms out to 20 km for the wider battle area.
 
 ### Photo mode
 

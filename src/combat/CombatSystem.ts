@@ -129,6 +129,7 @@ export interface CombatEvent {
     | "hit"
     | "explosion"
     | "flare"
+    | "bomb"
     | "complete"
     | "failed";
   position: Vector3;
@@ -201,6 +202,21 @@ export const WAR_WAYPOINTS = [
 /** An ingress marker counts when passed this close and this low (m above ground). */
 /** The player's hull radius for mid-air collisions (m); entities use half their hit radius. */
 export const MIDAIR_HULL = 6;
+/** War progress saved at the start of each phase, so Checkpoint mode can resume there. */
+export interface WarCheckpoint {
+  phase: 1 | 2 | 3;
+  /** Player position and level-flight heading (rad, 0 = north) and speed. */
+  x: number;
+  y: number;
+  z: number;
+  heading: number;
+  speed: number;
+  /** Ground installations already destroyed. */
+  destroyed: number[];
+  bombs: number;
+  wingBombs: number[];
+  wingmen: boolean[];
+}
 /** Height above the target a wingman runs in at for a level bomb release (m). */
 const WING_BOMB_HEIGHT = 320;
 export const WAR_GATE = { radius: 500, ceiling: 450 };
@@ -348,6 +364,8 @@ export class CombatSystem implements DefenseHost {
   wingmen: CombatEntity[] = [];
   warPhase = 0;
   waypoint = 0;
+  /** The latest War checkpoint this sortie (null before the first phase is done). */
+  checkpoint: WarCheckpoint | null = null;
   private wingJoinAt = Infinity;
   private wingJoined = false;
   readonly bombs: Bomb[] = Array.from({ length: 8 }, () => ({
@@ -866,6 +884,7 @@ export class CombatSystem implements DefenseHost {
     this.warPhase = this.waypoint = this.bombAmmo = this.bombCooldown = 0;
     this.wingJoinAt = Infinity;
     this.wingJoined = false;
+    this.checkpoint = null;
   }
   stop() {
     this.reset();
@@ -995,6 +1014,7 @@ export class CombatSystem implements DefenseHost {
         b.velocity.copy(player.velocity);
         this.bombAmmo--;
         this.bombCooldown = 0.35;
+        this.event("bomb", b.position, PLAYER_ID, true);
       }
     }
     this.updateFlares(dt);
@@ -1356,12 +1376,26 @@ export class CombatSystem implements DefenseHost {
   /** War phases: wingmen join after takeoff; each phase unlocks the next. */
   private updateWar(player: CombatPlayer, query?: CombatQuery) {
     if (this.takeoffAt >= 0 && this.wingJoinAt === Infinity) this.wingJoinAt = this.elapsed + 3;
-    if (!this.wingJoined && this.elapsed >= this.wingJoinAt) {
-      this.wingJoined = true;
-      this.direction.copy(this.localForward).applyQuaternion(player.quaternion);
-      this.aim.set(-this.direction.z, 0, this.direction.x).normalize();
-      this.wingmen.forEach((w, i) => {
-        w.active = true;
+    if (!this.wingJoined && this.elapsed >= this.wingJoinAt) this.joinWingmen(player);
+    const bandits = this.enemies.some((e) => e.active && e.kind === "air");
+    if (this.warPhase === 0 && this.weaponsFree && !bandits) this.enterWarPhase(1, player);
+    else if (this.warPhase === 1) {
+      const wp = WAR_WAYPOINTS[this.waypoint];
+      const agl = player.position.y - this.ground(wp.x, wp.z, query);
+      if (Math.hypot(player.position.x - wp.x, player.position.z - wp.z) < WAR_GATE.radius && agl < WAR_GATE.ceiling) {
+        this.waypoint++;
+        this.objective = `WAR · 2/4 · Fly low through the valley markers (${this.waypoint}/${WAR_WAYPOINTS.length}) · under ${WAR_GATE.ceiling} m`;
+        if (this.waypoint >= WAR_WAYPOINTS.length) this.enterWarPhase(2, player);
+      }
+    } else if (this.warPhase === 2 && !this.enemies.some((e) => e.active && e.role === "target")) this.enterWarPhase(3, player);
+  }
+  /** Viper flight forms up beside the leader (dead wingmen stay dead on a checkpoint resume). */
+  private joinWingmen(player: CombatPlayer, alive = [true, true]) {
+    this.wingJoined = true;
+    this.direction.copy(this.localForward).applyQuaternion(player.quaternion);
+    this.aim.set(-this.direction.z, 0, this.direction.x).normalize();
+    this.wingmen.forEach((w, i) => {
+      w.active = alive[i];
         w.position
           .copy(player.position)
           .addScaledVector(this.aim, i ? 60 : -60)
@@ -1371,25 +1405,18 @@ export class CombatSystem implements DefenseHost {
         w.velocity.copy(player.velocity);
         w.speed = Math.max(140, player.speed);
       });
-    }
-    const bandits = this.enemies.some((e) => e.active && e.kind === "air");
-    if (this.warPhase === 0 && this.weaponsFree && !bandits) {
-      this.warPhase = 1;
+  }
+  /** Starts a War phase and saves a checkpoint at its start. */
+  private enterWarPhase(phase: 1 | 2 | 3, player: CombatPlayer) {
+    this.warPhase = phase;
+    if (phase === 1) {
+      this.waypoint = 0;
       this.objective = `WAR · 2/4 · Fly low through the valley markers (0/${WAR_WAYPOINTS.length}) · under ${WAR_GATE.ceiling} m`;
-    } else if (this.warPhase === 1) {
-      const wp = WAR_WAYPOINTS[this.waypoint];
-      const agl = player.position.y - this.ground(wp.x, wp.z, query);
-      if (Math.hypot(player.position.x - wp.x, player.position.z - wp.z) < WAR_GATE.radius && agl < WAR_GATE.ceiling) {
-        this.waypoint++;
-        this.objective = `WAR · 2/4 · Fly low through the valley markers (${this.waypoint}/${WAR_WAYPOINTS.length}) · under ${WAR_GATE.ceiling} m`;
-        if (this.waypoint >= WAR_WAYPOINTS.length) {
-          this.warPhase = 2;
-          this.objective = "WAR · 3/4 · Bomb the Blackridge radar, fuel farm and shelters";
-          this.selected = this.enemies.find((e) => e.active && e.tag === "radar")?.id ?? this.selected;
-        }
-      }
-    } else if (this.warPhase === 2 && !this.enemies.some((e) => e.active && e.role === "target")) {
-      this.warPhase = 3;
+    } else if (phase === 2) {
+      this.waypoint = WAR_WAYPOINTS.length;
+      this.objective = "WAR · 3/4 · Bomb the Blackridge radar, fuel farm and shelters";
+      this.selected = this.enemies.find((e) => e.active && e.tag === "radar")?.id ?? this.selected;
+    } else {
       this.objective = "WAR · 4/4 · Hold the line against the counterattack";
       // The counterattack comes from far beyond Blackridge, out over the northern sea.
       const home = new Vector3(BLACKRIDGE.runway.x, 2800, BLACKRIDGE.runway.z);
@@ -1398,6 +1425,34 @@ export class CombatSystem implements DefenseHost {
         e.releaseAt = this.elapsed + i * 1.5;
       }
     }
+    const v = player.velocity;
+    this.checkpoint = {
+      phase,
+      x: player.position.x,
+      y: player.position.y,
+      z: player.position.z,
+      heading: Math.atan2(-v.x, -v.z),
+      speed: Math.max(160, Math.hypot(v.x, v.z)),
+      destroyed: this.enemies.filter((e) => !e.active && e.kind === "ground").map((e) => e.id),
+      bombs: this.bombAmmo,
+      wingBombs: [...this.wingBombs],
+      wingmen: this.wingmen.map((w) => w.active),
+    };
+  }
+  /**
+   * Checkpoint mode: after a fresh start("war") with the player placed airborne at the
+   * checkpoint, restores the operation's progress and Viper flight.
+   */
+  resumeWar(player: CombatPlayer, checkpoint: WarCheckpoint) {
+    if (this.active !== "war") return;
+    // Like a fresh takeoff: the usual grace before enemies open fire, to get your bearings.
+    this.takeoffAt = this.elapsed;
+    for (const e of this.enemies)
+      if (e.kind === "air" || checkpoint.destroyed.includes(e.id)) e.active = false;
+    this.bombAmmo = checkpoint.bombs;
+    this.wingBombs = [...checkpoint.wingBombs];
+    this.joinWingmen(player, checkpoint.wingmen);
+    this.enterWarPhase(checkpoint.phase, player);
   }
   /** Where a bomb released now would land (ground point); false when no ballistic solution. */
   bombImpact(player: CombatPlayer, out: Vector3, query?: CombatQuery) {
