@@ -107,12 +107,14 @@ export interface Tracer {
   previous: Vector3;
   velocity: Vector3;
 }
-/** Free-fall bomb: ballistic from the jet's velocity, bursting on the ground. */
+/** Powered glide bomb: dives onto its aim point like a missile that can only go down. */
 export interface Bomb {
   active: boolean;
   position: Vector3;
   previous: Vector3;
   velocity: Vector3;
+  /** Aim point: the selected ground target, else where the bomb pipper sits. */
+  target: Vector3;
 }
 /** Countermeasure flare: falls behind the jet and burns hot for a few seconds. */
 export interface Flare {
@@ -223,7 +225,16 @@ export const WAR_GATE = { radius: 500, ceiling: 450 };
 /** Viper flight: the player's two AI wingmen. */
 export const WINGMAN_IDS = [-2, -3] as const;
 /** Bomb burst: full damage at the centre, nothing beyond the radius. */
-export const BOMB = { damage: 190, radius: 110, ammo: { war: 8, strike: 6, wingman: 3 } };
+export const BOMB = {
+  damage: 570,
+  radius: 330,
+  /** Top speed (m/s) and motor acceleration (m/s²) of the diving bomb. */
+  speed: 380,
+  boost: 140,
+  /** Steepest climb the seeker allows: it only ever steers downward. */
+  minDive: 0.2,
+  ammo: { war: 8, strike: 6, wingman: 3 },
+};
 
 /** Escort corridor: up the west coast, brushing the edge of the northern defences. */
 export const ESCORT_ROUTE = [
@@ -373,6 +384,7 @@ export class CombatSystem implements DefenseHost {
     position: new Vector3(),
     previous: new Vector3(),
     velocity: new Vector3(),
+    target: new Vector3(),
   }));
   bombAmmo = 0;
   /** Bombs left per Viper wingman for the war bombing phase. */
@@ -1012,6 +1024,9 @@ export class CombatSystem implements DefenseHost {
         b.position.copy(player.position).y -= 2.5;
         b.previous.copy(b.position);
         b.velocity.copy(player.velocity);
+        const target = this.target;
+        if (target?.kind === "ground") b.target.copy(target.position);
+        else if (!this.bombImpact(player, b.target, this.query)) b.target.set(b.position.x, 0, b.position.z);
         this.bombAmmo--;
         this.bombCooldown = 0.35;
         this.event("bomb", b.position, PLAYER_ID, true);
@@ -1370,6 +1385,7 @@ export class CombatSystem implements DefenseHost {
     b.position.copy(w.position).y -= 2.5;
     b.previous.copy(b.position);
     b.velocity.copy(w.velocity);
+    b.target.copy(strike.position);
     this.wingBombs[slot]--;
     w.cooldown = 2;
   }
@@ -1474,14 +1490,19 @@ export class CombatSystem implements DefenseHost {
     for (const b of this.bombs) {
       if (!b.active) continue;
       b.previous.copy(b.position);
-      b.velocity.y -= 9.81 * dt;
-      b.velocity.multiplyScalar(1 - 0.02 * dt);
+      // Motor and seeker: speed builds fast while the nose swings onto the aim point, never upward.
+      const to = this.desired.copy(b.target).sub(b.position);
+      const range = to.length();
+      to.normalize();
+      if (to.y > -BOMB.minDive) to.setY(-BOMB.minDive).normalize();
+      const speed = Math.min(BOMB.speed, b.velocity.length() + BOMB.boost * dt);
+      b.velocity.lerp(to.multiplyScalar(speed), 1 - Math.exp(-4 * dt));
       b.position.addScaledVector(b.velocity, dt);
       const g = this.ground(b.position.x, b.position.z, query);
-      if (b.position.y > g) continue;
-      b.position.y = g;
+      if (b.position.y > g && range > 12) continue;
+      b.position.y = Math.max(g, Math.min(b.position.y, b.target.y));
       b.active = false;
-      this.event("explosion", b.position, PLAYER_ID, true, 2.2, { kind: "ground" });
+      this.event("explosion", b.position, PLAYER_ID, true, 6.6, { kind: "ground" });
       for (const e of this.enemies) {
         if (!e.active || e.kind !== "ground") continue;
         const d = e.position.distanceTo(b.position);
