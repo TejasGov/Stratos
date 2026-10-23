@@ -1294,6 +1294,11 @@ class Game {
             missileIds.add(id);
             this.effects.updateMissile(id, missile.position, 1 / 60);
           }
+        this.combat.bombs.forEach((bomb, i) => {
+          if (!bomb.active) return;
+          missileIds.add(`bomb-${i}`);
+          this.effects.updateMissile(`bomb-${i}`, bomb.position, 1 / 60);
+        });
         for (const id of this.missileEmitters)
           if (!missileIds.has(id)) this.effects.stopEmitter(id);
         this.missileEmitters = missileIds;

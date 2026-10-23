@@ -99,7 +99,7 @@ test("war: Viper flight joins after takeoff and every phase unlocks the next", (
   assert.match(system.status.result, /Blackridge destroyed/);
 });
 
-test("war: the bomb pipper predicts where a released bomb lands", () => {
+test("war: the guided bomb dives onto the pipper point, faster than free fall", () => {
   const p = player(0, 1000, 0);
   p.velocity.set(0, 0, -200);
   const system = new CombatSystem();
@@ -110,16 +110,19 @@ test("war: the bomb pipper predicts where a released bomb lands", () => {
   assert.ok(predicted.z < -2450 && predicted.z > -2900, `${predicted.z}`);
   run(system, p, 0.05, { ...combatNeutral, bomb: true }, flatWorld);
   const bomb = system.bombs.find((b) => b.active)!;
-  const released = bomb.position.clone();
-  const fly = bomb.velocity.clone();
   p.velocity.set(0, 0, 0);
-  for (let i = 0; i < 60 * 20 && bomb.active; i++) system.step(1 / 60, p, combatNeutral, flatWorld);
+  // A powered dive: it gets there far sooner than free fall, never climbing on the way.
+  let seconds = 0,
+    climbed = false;
+  for (; seconds < 20 && bomb.active; seconds += 1 / 60) {
+    climbed ||= bomb.velocity.y > 0;
+    system.step(1 / 60, p, combatNeutral, flatWorld);
+  }
   assert.equal(bomb.active, false);
-  // It lands where the pipper said (within a few metres of the prediction from the release point).
-  const check = player(released.x, released.y, released.z);
-  check.velocity.copy(fly);
-  system.bombImpact(check, predicted, flatWorld);
-  assert.ok(predicted.distanceTo(bomb.position) < 10, `${predicted.distanceTo(bomb.position)}`);
+  assert.equal(climbed, false);
+  assert.ok(seconds < 12, `${seconds} s`);
+  // With no ground target selected it lands where the pipper showed at release.
+  assert.ok(predicted.distanceTo(bomb.position) < 15, `${predicted.distanceTo(bomb.position)}`);
 });
 
 test("war: wingmen fight bandits and can be shot down", () => {
@@ -263,4 +266,22 @@ test("war checkpoints: each phase saves progress and a fresh sortie resumes from
   late.resumeWar(q, { ...checkpoint, phase: 3 });
   assert.equal(late.warPhase, 3);
   assert.equal(late.enemies.filter((e) => e.kind === "air" && e.active).length, 4);
+});
+
+test("war: a bomb on the selected target takes out SAMs within its blast", () => {
+  const system = new CombatSystem();
+  const p = player(0, 600, 0);
+  system.start("war", p);
+  const sam = system.enemies.find((e) => e.role.startsWith("sam"))!;
+  const near = system.enemies.find((e) => e !== sam && e.kind === "ground" && e.position.distanceTo(sam.position) < BOMB.radius * 0.5);
+  // Select the SAM, then release 800 m short of it and 500 m up.
+  (system as unknown as { selected: number }).selected = sam.id;
+  p.position.copy(sam.position).add(new Vector3(0, 500, 800));
+  p.previous.copy(p.position);
+  p.velocity.set(0, 0, -200);
+  run(system, p, 0.05, { ...combatNeutral, bomb: true }, flatWorld);
+  p.velocity.set(0, 0, 0);
+  run(system, p, 10, combatNeutral, flatWorld);
+  assert.equal(sam.active, false);
+  if (near) assert.equal(near.active, false, "neighbour inside the blast");
 });
