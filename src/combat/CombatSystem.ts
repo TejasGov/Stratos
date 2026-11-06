@@ -45,6 +45,8 @@ export interface CombatPlayer extends EngineHeat {
   onGround?: boolean;
   /** Post-stall manoeuvre (cobra): radar Doppler loses the jet. */
   postStall?: boolean;
+  /** Load factor (G): a hard break can beat a SAM's proximity fuse. */
+  gLoad?: number;
 }
 export interface CombatInput {
   gun: boolean;
@@ -117,6 +119,8 @@ export interface Bomb {
   target: Vector3;
   /** The installation it was sent at (0: a plain ground point). */
   targetId: number;
+  /** Viper flight's SAM-suppression bomb: wrecks SAM vehicles, leaves the objectives to the leader. */
+  sead: boolean;
 }
 /** Countermeasure flare: falls behind the jet and burns hot for a few seconds. */
 export interface Flare {
@@ -223,6 +227,8 @@ export interface WarCheckpoint {
 }
 /** Viper flight steers apart from each other and the leader inside this range (m). */
 const WING_SEPARATION = 45;
+/** Viper flight releases its bombs only this close to the target (horizontal, m). */
+const WING_RELEASE = 1600;
 /** A Viper inside this range of its bandit breaks off rather than ram it (m). */
 const WING_BREAK = 260;
 /** How far a released guided bomb can glide to an objective (m). */
@@ -230,6 +236,8 @@ const BOMB_REACH = 4500;
 /** Height above the target a wingman runs in at for a level bomb release (m). */
 const WING_BOMB_HEIGHT = 320;
 export const WAR_GATE = { radius: 500, ceiling: 450 };
+/** SAM proximity fuze: chance of a late burst (shrapnel only) and its damage share. */
+export const SAM_FUZE = { base: 0.25, perG: 0.1, max: 0.65, lateBurst: 0.2 };
 /** Each War phase starts with at least this much on the rails. */
 export const WAR_REARM = { missiles: 8, flares: 12 };
 /** Viper flight: the player's two AI wingmen. */
@@ -396,12 +404,15 @@ export class CombatSystem implements DefenseHost {
     velocity: new Vector3(),
     target: new Vector3(),
     targetId: 0,
+    sead: false,
   }));
   bombAmmo = 0;
   /** Bombs left per Viper wingman for the war bombing phase. */
   wingBombs = [0, 0];
   /** The bandit each Viper is working on, so they split up instead of chasing one. */
   private wingTargets = [0, 0];
+  /** The SAM site each Viper is suppressing during the valley ingress. */
+  private wingSites = ["", ""];
   private bombCooldown = 0;
   private marker = new Vector3();
   /** War: the ingress marker to fly through next (global, 160 m above the ground), or null. */
@@ -1043,6 +1054,7 @@ export class CombatSystem implements DefenseHost {
         b.velocity.copy(player.velocity);
         const target = this.bombTarget(this.target, b.position);
         b.targetId = target?.id ?? 0;
+        b.sead = false;
         if (target) b.target.copy(target.position);
         else if (!this.bombImpact(player, b.target, this.query)) b.target.set(b.position.x, 0, b.position.z);
         this.bombAmmo--;
@@ -1333,7 +1345,8 @@ export class CombatSystem implements DefenseHost {
     if (strike) {
       const g = this.ground(strike.position.x, strike.position.z, query);
       this.desired.set(strike.position.x, g + WING_BOMB_HEIGHT, strike.position.z).sub(w.position).normalize();
-      speed = 200;
+      // Ahead of the leader on the SAM run; a steadier bombing pace once he's over the target.
+      speed = this.warPhase === 1 ? 270 : 200;
     } else if (target && best < WING_BREAK + Math.max(0, this.closing(w, target)) * 1.5) {
       // Too close to shoot or survive: overshoot and climb away, then come round again.
       this.desired.copy(w.position).sub(target.position).setY(0).normalize();
@@ -1397,7 +1410,25 @@ export class CombatSystem implements DefenseHost {
   }
   /** A wingman's ground objective in the war bombing phase, or null. */
   private wingStrike(slot: number, w: CombatEntity) {
-    if (this.active !== "war" || this.warPhase !== 2 || !this.wingBombs[slot]) return null;
+    if (this.active !== "war" || !this.wingBombs[slot]) return null;
+    // While the leader runs the valley, Viper flight goes ahead and takes down Blackridge's SAMs.
+    if (this.warPhase === 1) {
+      // Split the sites: the one the other Viper is on counts as much farther away.
+      const taken = this.wingmen[1 - slot]?.active ? this.wingSites[1 - slot] : "";
+      let pick: CombatEntity | null = null,
+        best = Infinity;
+      for (const e of this.enemies)
+        if (e.active && e.role.startsWith("sam") && e.tag.startsWith("br-")) {
+          const d = e.position.distanceToSquared(w.position) * (e.tag === taken ? 16 : 1);
+          if (d < best) {
+            best = d;
+            pick = e;
+          }
+        }
+      this.wingSites[slot] = pick?.tag ?? "";
+      return pick;
+    }
+    if (this.warPhase !== 2) return null;
     const wanted = (e: CombatEntity) => (slot === 0 ? e.role.startsWith("sam") : e.role === "target");
     let pick: CombatEntity | null = null,
       best = Infinity;
@@ -1417,7 +1448,11 @@ export class CombatSystem implements DefenseHost {
   }
   /** Releases a bomb when the bomb pipper's ballistic solution falls on the target. */
   private wingBomb(w: CombatEntity, slot: number, strike: CombatEntity, query?: CombatQuery) {
-    if (w.cooldown > 0 || !this.bombImpact(w as unknown as CombatPlayer, this.impact, query)) return;
+    if (w.cooldown > 0) return;
+    // Release close in with a clear line, so the dive can't end on a ridge short of the target.
+    if (Math.hypot(w.position.x - strike.position.x, w.position.z - strike.position.z) > WING_RELEASE) return;
+    if (this.blocked(w.position, strike.position, query)) return;
+    if (!this.bombImpact(w as unknown as CombatPlayer, this.impact, query)) return;
     if (Math.hypot(this.impact.x - strike.position.x, this.impact.z - strike.position.z) > BOMB.radius * 0.4) return;
     const b = this.bombs.find((x) => !x.active);
     if (!b) return;
@@ -1427,6 +1462,7 @@ export class CombatSystem implements DefenseHost {
     b.velocity.copy(w.velocity);
     b.target.copy(strike.position);
     b.targetId = strike.id;
+    b.sead = this.warPhase === 1;
     this.wingBombs[slot]--;
     w.cooldown = 2;
   }
@@ -1441,7 +1477,7 @@ export class CombatSystem implements DefenseHost {
       const agl = player.position.y - this.ground(wp.x, wp.z, query);
       if (Math.hypot(player.position.x - wp.x, player.position.z - wp.z) < WAR_GATE.radius && agl < WAR_GATE.ceiling) {
         this.waypoint++;
-        this.objective = `WAR · 2/4 · Fly low through the valley markers (${this.waypoint}/${WAR_WAYPOINTS.length}) · under ${WAR_GATE.ceiling} m`;
+        this.objective = `WAR · 2/4 · Fly low through the valley markers (${this.waypoint}/${WAR_WAYPOINTS.length}) · under ${WAR_GATE.ceiling} m · Vipers hitting the SAMs`;
         if (this.waypoint >= WAR_WAYPOINTS.length) this.enterWarPhase(2, player);
       }
     } else if (this.warPhase === 2) {
@@ -1476,7 +1512,7 @@ export class CombatSystem implements DefenseHost {
     this.flares = Math.max(this.flares, WAR_REARM.flares);
     if (phase === 1) {
       this.waypoint = 0;
-      this.objective = `WAR · 2/4 · Fly low through the valley markers (0/${WAR_WAYPOINTS.length}) · under ${WAR_GATE.ceiling} m`;
+      this.objective = `WAR · 2/4 · Fly low through the valley markers (0/${WAR_WAYPOINTS.length}) · under ${WAR_GATE.ceiling} m · Vipers hitting the SAMs`;
     } else if (phase === 2) {
       this.waypoint = WAR_WAYPOINTS.length;
       this.objective = "WAR · 3/4 · Bomb the Blackridge radar, fuel farm and shelters";
@@ -1580,7 +1616,7 @@ export class CombatSystem implements DefenseHost {
       b.active = false;
       this.event("explosion", b.position, PLAYER_ID, true, 6.6, { kind: "ground" });
       for (const e of this.enemies) {
-        if (!e.active || e.kind !== "ground") continue;
+        if (!e.active || e.kind !== "ground" || (b.sead && !e.role.startsWith("sam"))) continue;
         const d = e.position.distanceTo(b.position);
         if (d < BOMB.radius) this.damageEntity(e, BOMB.damage * (1 - d / BOMB.radius), player, "missile");
       }
@@ -1871,9 +1907,12 @@ export class CombatSystem implements DefenseHost {
       const blocked = this.blocked(m.previous, m.position, query);
       if (hit && (!blocked || this.isGround(hit))) {
         // Proximity burst: a near miss does about half the damage of a direct hit.
-        const damage = m.hostile
+        let damage = m.hostile
           ? m.profile.damage * (1 - 0.5 * MathUtils.clamp(miss / m.profile.fuze, 0, 1))
           : m.profile.damage;
+        // A SAM fuze can fire late, more so against a jet breaking hard: shrapnel, not a kill.
+        if (hit === player && this.groundLaunched(m) && this.random() < this.samEvasion(player))
+          damage *= SAM_FUZE.lateBurst;
         this.damageEntity(hit, damage, player, "missile");
         this.event("explosion", m.position, m.id, !m.hostile, 0.6, {
           kind: this.isGround(hit) ? "ground" : "air",
@@ -1886,6 +1925,14 @@ export class CombatSystem implements DefenseHost {
         m.active = false;
       }
     }
+  }
+  private groundLaunched(m: Missile) {
+    return m.profile.id === "shorad" || m.profile.id === "mrsam";
+  }
+  /** Chance a SAM bursts outside lethal range: some always, more in a hard break. */
+  samEvasion(player: CombatPlayer) {
+    const g = player.gLoad ?? 1;
+    return MathUtils.clamp(SAM_FUZE.base + (g - 2) * SAM_FUZE.perG, SAM_FUZE.base, SAM_FUZE.max);
   }
   /**
    * Mid-air collisions: two opposing airborne jets (the player, the transport or

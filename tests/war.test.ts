@@ -6,6 +6,7 @@ import {
   CombatSystem,
   WAR_WAYPOINTS,
   WINGMAN_IDS,
+  SAM_FUZE,
   combatNeutral,
   type CombatPlayer,
 } from "../src/combat/CombatSystem.ts";
@@ -239,6 +240,34 @@ test("war: in the bombing phase Viper flight bombs the SAM sites and targets", (
   run(system, p, 90);
   assert.ok(system.wingBombs[0] < BOMB.ammo.wingman && system.wingBombs[1] < BOMB.ammo.wingman, `bombs ${system.wingBombs}`);
   assert.ok(standing() <= before - 2, `ground targets ${before} -> ${standing()}`);
+});
+
+test("war: during the valley run Viper flight suppresses Blackridge's SAMs and only its SAMs", () => {
+  // The player orbits far south, out of the fight; the Vipers fly ahead to Blackridge.
+  const p = player(0, 4000, 0);
+  const system = new CombatSystem();
+  system.start("war", p);
+  // Past the takeoff grace, so clearing the first wave opens the valley run.
+  run(system, p, 8);
+  clearAir(system);
+  run(system, p, 0.2);
+  assert.equal(system.warPhase, 1);
+  const brSams = () => system.enemies.filter((e) => e.active && e.role.startsWith("sam") && e.tag.startsWith("br-")).length;
+  const objectives = () => system.enemies.filter((e) => e.active && e.role === "target").length;
+  const before = brSams();
+  run(system, p, 120);
+  assert.ok(brSams() <= before - 2, `Blackridge SAM vehicles ${before} -> ${brSams()}`);
+  // The radar, fuel farm and shelters are still the leader's to bomb.
+  assert.equal(objectives(), BLACKRIDGE_TARGETS.length);
+  assert.ok(system.enemies.filter((e) => e.role.startsWith("sam") && !e.tag.startsWith("br-")).every((e) => e.active));
+});
+
+test("war: a SAM fuze sometimes bursts late, more often against a hard break", () => {
+  const system = new CombatSystem();
+  const p = player();
+  assert.equal(system.samEvasion({ ...p, gLoad: 1 }), SAM_FUZE.base);
+  assert.ok(system.samEvasion({ ...p, gLoad: 5 }) > SAM_FUZE.base);
+  assert.equal(system.samEvasion({ ...p, gLoad: 9 }), SAM_FUZE.max);
 });
 
 test("war checkpoints: each phase saves progress and a fresh sortie resumes from it", () => {
