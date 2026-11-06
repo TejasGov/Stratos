@@ -652,8 +652,10 @@ export class Flight {
         desiredPitch =
           this.angles.x +
           MathUtils.clamp(targetPitch - this.angles.x, -0.7 * dt, 0.7 * dt);
-        // Target follow cannot steer the aircraft into the next terrain ridge.
-        const ahead = this.speed * 2;
+        // Target follow cannot steer the aircraft into the next terrain ridge. Look far
+        // enough ahead that a slow jet just off the runway isn't asked for a cliff-face
+        // climb it can't fly: that only stalls it into the hillside.
+        const ahead = Math.max(600, this.speed * 3);
         const floor =
           Math.max(
             0,
@@ -665,7 +667,7 @@ export class Flight {
         if (this.position.y + direction.y * ahead < floor)
           desiredPitch = Math.max(
             desiredPitch,
-            Math.atan2(floor - this.position.y, ahead),
+            Math.min(Math.atan2(floor - this.position.y, ahead), MathUtils.clamp((this.speed - 60) / 300, 0.12, 0.6)),
           );
       }
       const desiredBank = MathUtils.clamp(turn * 0.48, -0.5, 0.5);

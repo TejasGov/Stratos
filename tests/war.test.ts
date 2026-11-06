@@ -147,7 +147,8 @@ test("war: wingmen fight bandits and can be shot down", () => {
   // A hostile missile aimed at Viper 3 can kill it.
   const viper3 = system.wingmen[1];
   viper3.health = 10;
-  const from = viper3.position.clone().add(new Vector3(0, 0, 150));
+  // From close behind, along its flight path, so its manoeuvring can't spoil the shot.
+  const from = viper3.position.clone().addScaledVector(viper3.velocity.clone().normalize(), -60);
   const missile = launchMissile(
     system.missiles[20],
     MISSILES.aam,
@@ -178,11 +179,13 @@ test("mid-air collisions destroy both aircraft; a near miss does not", () => {
   assert.equal(system.midair, true);
   assert.ok(system.drainEvents().some((e) => e.type === "explosion"));
 
-  // Two AI jets into each other, well away from the player.
+  // A Viper and a bandit into each other, well away from the player: both go down.
   system = new CombatSystem();
   p = player();
-  system.start("intercept", p);
-  const [a, b] = system.enemies.filter((e) => e.kind === "air");
+  system.start("war", p);
+  run(system, p, 4);
+  const [a] = system.enemies.filter((e) => e.kind === "air");
+  const [b] = system.wingmen;
   a.position.set(3000, 2500, -3000);
   a.previous.copy(a.position);
   b.position.copy(a.position).add(new Vector3(3, 0, 0));
@@ -192,6 +195,23 @@ test("mid-air collisions destroy both aircraft; a near miss does not", () => {
   assert.equal(b.active, false);
   assert.equal(system.playerHealth, 100);
   assert.equal(system.midair, false);
+
+  // Jets on the same side never collide: two bandits, or the leader and a Viper.
+  system = new CombatSystem();
+  p = player();
+  system.start("war", p);
+  run(system, p, 4);
+  const [c, d] = system.enemies.filter((e) => e.kind === "air");
+  c.position.set(3000, 2500, -3000);
+  c.previous.copy(c.position);
+  d.position.copy(c.position).add(new Vector3(3, 0, 0));
+  d.previous.copy(d.position);
+  const [viper] = system.wingmen;
+  viper.position.copy(p.position).add(new Vector3(2, 0, 0));
+  viper.previous.copy(viper.position);
+  run(system, p, 1 / 60, combatNeutral, flatWorld);
+  assert.ok(c.active && d.active && viper.active);
+  assert.equal(system.playerHealth, 100);
 
   // Forty metres apart is a pass, not a collision.
   system = new CombatSystem();

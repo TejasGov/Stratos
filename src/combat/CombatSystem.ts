@@ -115,6 +115,8 @@ export interface Bomb {
   velocity: Vector3;
   /** Aim point: the selected ground target, else where the bomb pipper sits. */
   target: Vector3;
+  /** The installation it was sent at (0: a plain ground point). */
+  targetId: number;
 }
 /** Countermeasure flare: falls behind the jet and burns hot for a few seconds. */
 export interface Flare {
@@ -219,9 +221,17 @@ export interface WarCheckpoint {
   wingBombs: number[];
   wingmen: boolean[];
 }
+/** Viper flight steers apart from each other and the leader inside this range (m). */
+const WING_SEPARATION = 45;
+/** A Viper inside this range of its bandit breaks off rather than ram it (m). */
+const WING_BREAK = 260;
+/** How far a released guided bomb can glide to an objective (m). */
+const BOMB_REACH = 4500;
 /** Height above the target a wingman runs in at for a level bomb release (m). */
 const WING_BOMB_HEIGHT = 320;
 export const WAR_GATE = { radius: 500, ceiling: 450 };
+/** Each War phase starts with at least this much on the rails. */
+export const WAR_REARM = { missiles: 8, flares: 12 };
 /** Viper flight: the player's two AI wingmen. */
 export const WINGMAN_IDS = [-2, -3] as const;
 /** Bomb burst: full damage at the centre, nothing beyond the radius. */
@@ -385,10 +395,13 @@ export class CombatSystem implements DefenseHost {
     previous: new Vector3(),
     velocity: new Vector3(),
     target: new Vector3(),
+    targetId: 0,
   }));
   bombAmmo = 0;
   /** Bombs left per Viper wingman for the war bombing phase. */
   wingBombs = [0, 0];
+  /** The bandit each Viper is working on, so they split up instead of chasing one. */
+  private wingTargets = [0, 0];
   private bombCooldown = 0;
   private marker = new Vector3();
   /** War: the ingress marker to fly through next (global, 160 m above the ground), or null. */
@@ -1028,8 +1041,9 @@ export class CombatSystem implements DefenseHost {
         b.position.copy(player.position).y -= 2.5;
         b.previous.copy(b.position);
         b.velocity.copy(player.velocity);
-        const target = this.target;
-        if (target?.kind === "ground") b.target.copy(target.position);
+        const target = this.bombTarget(this.target, b.position);
+        b.targetId = target?.id ?? 0;
+        if (target) b.target.copy(target.position);
         else if (!this.bombImpact(player, b.target, this.query)) b.target.set(b.position.x, 0, b.position.z);
         this.bombAmmo--;
         this.bombCooldown = 0.35;
@@ -1300,14 +1314,18 @@ export class CombatSystem implements DefenseHost {
     this.forward.copy(this.localForward).applyQuaternion(w.quaternion);
     let target: CombatEntity | null = null,
       best = 9000;
+    // Split the work: a bandit the other Viper is already on counts as twice as far.
+    const other = this.wingmen[1 - slot];
+    const taken = other?.active ? this.wingTargets[1 - slot] : 0;
     for (const e of this.enemies)
       if (e.active && e.kind === "air" && this.elapsed >= e.releaseAt) {
         const d = e.position.distanceTo(w.position);
-        if (d < best) {
+        if (d * (e.id === taken ? 2 : 1) < best * (target?.id === taken ? 2 : 1)) {
           best = d;
           target = e;
         }
       }
+    this.wingTargets[slot] = target?.id ?? 0;
     // Bombing phase: Viper 2 goes for the SAM sites, Viper 3 for the targets, unless a bandit is close.
     const strike = best > 3000 ? this.wingStrike(slot, w) : null;
     if (strike) target = null;
@@ -1316,6 +1334,11 @@ export class CombatSystem implements DefenseHost {
       const g = this.ground(strike.position.x, strike.position.z, query);
       this.desired.set(strike.position.x, g + WING_BOMB_HEIGHT, strike.position.z).sub(w.position).normalize();
       speed = 200;
+    } else if (target && best < WING_BREAK + Math.max(0, this.closing(w, target)) * 1.5) {
+      // Too close to shoot or survive: overshoot and climb away, then come round again.
+      this.desired.copy(w.position).sub(target.position).setY(0).normalize();
+      this.desired.addScaledVector(this.forward, 1.5).setY(0.5).normalize();
+      speed = 230;
     } else if (target) {
       this.desired
         .copy(target.position)
@@ -1335,6 +1358,14 @@ export class CombatSystem implements DefenseHost {
       const gap = this.desired.length();
       this.desired.normalize();
       speed = MathUtils.clamp(player.speed + (gap - 30) * 0.4, 110, 320);
+    }
+    // Keep clear of the other Viper and the leader.
+    for (const friend of [other?.active ? other : null, player]) {
+      if (!friend) continue;
+      this.aim.copy(w.position).sub(friend.position);
+      const gap = this.aim.length();
+      if (gap > 1 && gap < WING_SEPARATION)
+        this.desired.addScaledVector(this.aim, (1 - gap / WING_SEPARATION) / gap).normalize();
     }
     const ahead = this.aim.copy(w.position).addScaledVector(this.forward, w.speed * 2.5);
     const clearance =
@@ -1358,6 +1389,11 @@ export class CombatSystem implements DefenseHost {
       w.cooldown = 16 + this.random() * 8;
     } else if (best < 800 && aligned > 0.985 && w.stateTime % 0.9 < dt)
       this.fireGun(w.position, this.direction, false, w.id);
+  }
+  /** Closing speed between two jets (m/s, positive when converging). */
+  private closing(a: CombatEntity, b: CombatEntity) {
+    this.aim.copy(b.position).sub(a.position).normalize();
+    return a.velocity.dot(this.aim) - b.velocity.dot(this.aim);
   }
   /** A wingman's ground objective in the war bombing phase, or null. */
   private wingStrike(slot: number, w: CombatEntity) {
@@ -1390,6 +1426,7 @@ export class CombatSystem implements DefenseHost {
     b.previous.copy(b.position);
     b.velocity.copy(w.velocity);
     b.target.copy(strike.position);
+    b.targetId = strike.id;
     this.wingBombs[slot]--;
     w.cooldown = 2;
   }
@@ -1433,6 +1470,10 @@ export class CombatSystem implements DefenseHost {
   /** Starts a War phase and saves a checkpoint at its start. */
   private enterWarPhase(phase: 1 | 2 | 3, player: CombatPlayer) {
     this.warPhase = phase;
+    // A long operation: Haven tops up missiles and flares between phases so the last
+    // fight is never lost to an empty rail.
+    this.missileAmmo = Math.max(this.missileAmmo, WAR_REARM.missiles);
+    this.flares = Math.max(this.flares, WAR_REARM.flares);
     if (phase === 1) {
       this.waypoint = 0;
       this.objective = `WAR · 2/4 · Fly low through the valley markers (0/${WAR_WAYPOINTS.length}) · under ${WAR_GATE.ceiling} m`;
@@ -1478,6 +1519,28 @@ export class CombatSystem implements DefenseHost {
     this.joinWingmen(player, checkpoint.wingmen);
     this.enterWarPhase(checkpoint.phase, player);
   }
+  /**
+   * Where a guided bomb should go: the selected installation unless bombs already on
+   * their way will flatten it (one direct hit destroys any of them), then the nearest
+   * other ground objective within glide reach. Mashing the release spreads the stick
+   * across Blackridge instead of wasting it on one smoking crater.
+   */
+  private bombTarget(selected: CombatEntity | null, from: Vector3, self?: Bomb) {
+    const covered = (e: CombatEntity) => this.bombs.some((b) => b !== self && b.active && b.targetId === e.id);
+    if (selected?.kind === "ground" && selected.active && !covered(selected)) return selected;
+    let pick: CombatEntity | null = null,
+      best = BOMB_REACH * BOMB_REACH;
+    for (const e of this.enemies) {
+      if (!e.active || e.kind !== "ground" || covered(e)) continue;
+      // Installations first; SAM vehicles only when nothing else is in reach.
+      const d = e.position.distanceToSquared(from) * (e.role === "target" ? 1 : 4);
+      if (d < best) {
+        best = d;
+        pick = e;
+      }
+    }
+    return pick ?? (selected?.kind === "ground" && selected.active ? selected : null);
+  }
   /** Where a bomb released now would land (ground point); false when no ballistic solution. */
   bombImpact(player: CombatPlayer, out: Vector3, query?: CombatQuery) {
     out.copy(player.position);
@@ -1498,6 +1561,11 @@ export class CombatSystem implements DefenseHost {
     for (const b of this.bombs) {
       if (!b.active) continue;
       b.previous.copy(b.position);
+      if (b.targetId && !this.enemies.some((e) => e.id === b.targetId && e.active)) {
+        const next = this.bombTarget(null, b.position, b);
+        b.targetId = next?.id ?? 0;
+        if (next) b.target.copy(next.position);
+      }
       // Motor and seeker: speed builds fast while the nose swings onto the aim point, never upward.
       const to = this.desired.copy(b.target).sub(b.position);
       const range = to.length();
@@ -1820,9 +1888,9 @@ export class CombatSystem implements DefenseHost {
     }
   }
   /**
-   * Mid-air collisions: any two airborne jets (player, bandits, wingmen, the
-   * transport) whose swept paths come within their combined hull radii both go
-   * down in one fireball.
+   * Mid-air collisions: two opposing airborne jets (the player, the transport or
+   * a Viper against a bandit) whose swept paths come within their combined hull
+   * radii both go down in one fireball. Jets on the same side deconflict.
    */
   private collide(player: CombatPlayer) {
     const jets = this.airborne;
@@ -1836,6 +1904,7 @@ export class CombatSystem implements DefenseHost {
         const a = jets[i],
           b = jets[j];
         if (!this.flying(a, player) || !this.flying(b, player)) continue;
+        if (this.hostile(a, player) === this.hostile(b, player)) continue;
         if (sweptClosest(a.previous, a.position, b.previous, b.position) > this.hull(a, player) + this.hull(b, player))
           continue;
         for (const jet of [a, b]) {
@@ -1849,6 +1918,10 @@ export class CombatSystem implements DefenseHost {
         }
         this.event("explosion", this.desired.copy(a.position).lerp(b.position, 0.5), undefined, false, 1.8, { kind: "air" });
       }
+  }
+  /** Bandits are hostile; the player, the transport and Viper flight are on one side. */
+  private hostile(jet: CombatEntity | CombatPlayer, player: CombatPlayer) {
+    return jet !== player && (jet as CombatEntity).kind === "air";
   }
   /** Half the centre-to-centre distance at which two airframes touch (m). */
   private hull(jet: CombatEntity | CombatPlayer, player: CombatPlayer) {
